@@ -67,7 +67,10 @@ export default new OAuthProvider<Env>({
     bearer_methods_supported: ["header"],
     resource_name: "Zoho Creator MCP"
   },
-  clientIdMetadataDocumentEnabled: true,
+  // ChatGPT's CIMD prefers private_key_jwt, which this provider does not
+  // implement. Use DCR so the client and server negotiate a supported token
+  // endpoint authentication method instead of looping after authorization.
+  clientIdMetadataDocumentEnabled: false,
   accessTokenTTL: 60 * 60,
   refreshTokenTTL: 30 * 24 * 60 * 60
 });
