@@ -45,7 +45,8 @@ async function token(env: Env): Promise<TokenCache> {
   const response = await fetch(new URL("/oauth/v2/token", accounts), { method: "POST", body });
   const data = await response.json() as Record<string, unknown>;
   if (!response.ok || typeof data.access_token !== "string") {
-    throw new Error(`Zoho token refresh failed (HTTP ${response.status})`);
+    const errorCode = typeof data.error === "string" ? data.error : "unknown_error";
+    throw new Error(`Zoho token refresh failed: ${errorCode} (HTTP ${response.status})`);
   }
   const apiDomain = String(data.api_domain || env.ZOHO_API_DOMAIN || "");
   const apiUrl = new URL(apiDomain);
