@@ -9,8 +9,11 @@ The MCP server contains no create, update, or delete tools. It exposes only:
 - `list_applications`
 - `list_components` for forms, reports, pages, and sections
 - `get_form_fields`
-- `get_records` (maximum 200 rows per call)
+- `get_records` (cursor-based pages of 200, 500, or 1,000 rows)
+- `count_records` (follows every cursor while fetching IDs only)
+- `get_all_records` (follows cursors for a required, limited field selection)
 - `get_record`
+- `get_record_file`
 
 Every tool is annotated read-only. Zoho link names are validated, arbitrary URLs are rejected, and `/mcp` fails closed unless the request carries a valid OAuth access token.
 
