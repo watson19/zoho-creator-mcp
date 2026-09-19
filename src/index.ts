@@ -34,8 +34,8 @@ function createServer(env: Env) {
   });
   server.registerTool("get_record_file", { description: "Download an image or file attached to one field of a Creator report record.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), field_link_name: linkName, environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, field_link_name, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
-    const recordResponse = await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, {}, environment) as { data?: Array<Record<string, unknown>> };
-    const record = recordResponse.data?.[0];
+    const recordResponse = await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, {}, environment) as { data?: Record<string, unknown> | Array<Record<string, unknown>> };
+    const record = Array.isArray(recordResponse.data) ? recordResponse.data[0] : recordResponse.data;
     const fieldValue = record?.[field_link_name];
     if (typeof fieldValue !== "string" || !fieldValue) throw new Error("The requested record field does not contain a downloadable file");
 
