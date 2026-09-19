@@ -16,14 +16,20 @@ Every tool is annotated read-only. Zoho link names are validated, arbitrary URLs
 
 ## Zoho OAuth setup
 
-Create a Zoho API client and obtain a refresh token with only these scopes:
+Create a Zoho refresh token with these Creator and Forms scopes:
 
 ```
 ZohoCreator.dashboard.READ
 ZohoCreator.meta.application.READ
 ZohoCreator.meta.form.READ
 ZohoCreator.report.READ
+ZohoCreator.form.CREATE
+ZohoCreator.report.UPDATE
+ZohoCreator.report.DELETE
+ZohoForms.forms.ALL
 ```
+
+The token is authorised for future read/write work, but this MCP release intentionally registers read-only tools only. Adding mutation tools requires a separate reviewed change with confirmation and audit safeguards.
 
 Use the `.com` accounts domain for this account. The server then uses the `api_domain` Zoho returns, so the Creator data endpoint is never guessed or hard-coded.
 
