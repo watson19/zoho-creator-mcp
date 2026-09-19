@@ -83,3 +83,26 @@ export async function zohoGet(
   }
   return data;
 }
+
+export async function zohoGetFile(
+  env: Env,
+  path: string,
+  environment = "production"
+): Promise<{ data: string; mimeType: string }> {
+  const credentials = await token(env);
+  const url = new URL(path, credentials.apiDomain);
+  const headers: Record<string, string> = { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` };
+  if (environment !== "production") headers.environment = safeEnvironment(environment);
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) throw new Error(`Zoho file download failed (HTTP ${response.status})`);
+
+  const mimeType = (response.headers.get("content-type") || "application/octet-stream").split(";")[0];
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return { data: btoa(binary), mimeType };
+}
