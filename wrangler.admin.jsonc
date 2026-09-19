@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zoho-creator-admin-mcp",
+  "main": "src/admin.ts",
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "a4ebd8776abb4f8bb3d5df93631d7688"
+    }
+  ],
+  "workers_dev": true,
+  "preview_urls": true,
+  "vars": {
+    "ACCESS_MODE": "read_write",
+    "WRITE_ALLOWED_APPS": "estudiantes",
+    "WRITE_ALLOWED_FORMS": "estudiantes/Informacion",
+    "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students",
+    "AUDIT_RETENTION_DAYS": "90",
+    "ZOHO_ACCOUNT_OWNER": "idiomaswatson",
+    "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
+    "ZOHO_API_DOMAIN": "https://www.zohoapis.com"
+  },
+  "observability": { "enabled": true }
+}
