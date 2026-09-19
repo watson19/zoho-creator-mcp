@@ -3,7 +3,13 @@
   "name": "zoho-creator-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-19",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "a4ebd8776abb4f8bb3d5df93631d7688"
+    }
+  ],
   "workers_dev": true,
   "preview_urls": true,
   "vars": {

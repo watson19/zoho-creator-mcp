@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
+import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
-import { authorize, bearerIsValid, completeAuthorization, exchangeToken, oauthMetadata, registerClient, resourceMetadata } from "./oauth";
+import { authorize } from "./oauth";
 import { type Env, safeLinkName, zohoGet } from "./zoho";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -34,26 +35,39 @@ function createServer(env: Env) {
   return server;
 }
 
-function oauthUnauthorized(request: Request): Response {
-  const metadata = `${new URL(request.url).origin}/.well-known/oauth-protected-resource`;
-  return Response.json({ error: "invalid_token", error_description: "A valid OAuth access token is required" }, {
-    status: 401,
-    headers: { "WWW-Authenticate": `Bearer resource_metadata="${metadata}", scope="mcp"`, "Cache-Control": "no-store" }
-  });
-}
-
-export default {
+const apiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", mode: "read-only", authentication: "oauth-2.1-pkce" });
-    if (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") return resourceMetadata(request);
-    if (url.pathname === "/.well-known/oauth-authorization-server") return oauthMetadata(request);
-    if (url.pathname === "/register") return registerClient(request, env);
-    if (url.pathname === "/authorize") return authorize(request, env);
-    if (url.pathname === "/oauth/complete") return completeAuthorization(request, env);
-    if (url.pathname === "/token") return exchangeToken(request, env);
-    if (url.pathname !== "/mcp") return new Response("Not Found", { status: 404 });
-    if (!await bearerIsValid(request, env)) return oauthUnauthorized(request);
     return createMcpHandler(() => createServer(env))(request, env, ctx);
   }
 } satisfies ExportedHandler<Env>;
+
+const defaultHandler = {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", mode: "read-only", authentication: "cloudflare-oauth-provider" });
+    if (url.pathname === "/authorize") return authorize(request, env);
+    return new Response("Not Found", { status: 404 });
+  }
+} satisfies ExportedHandler<Env>;
+
+const base = "https://zoho-creator-mcp.ec4c5111f2c81375a3b2ae75ae7d3c37ceca2fa0.workers.dev";
+
+export default new OAuthProvider<Env>({
+  apiRoute: "/mcp",
+  apiHandler,
+  defaultHandler,
+  authorizeEndpoint: "/authorize",
+  tokenEndpoint: "/token",
+  clientRegistrationEndpoint: "/register",
+  scopesSupported: ["mcp"],
+  resourceMetadata: {
+    resource: `${base}/mcp`,
+    authorization_servers: [base],
+    scopes_supported: ["mcp"],
+    bearer_methods_supported: ["header"],
+    resource_name: "Zoho Creator MCP"
+  },
+  clientIdMetadataDocumentEnabled: true,
+  accessTokenTTL: 60 * 60,
+  refreshTokenTTL: 30 * 24 * 60 * 60
+});
