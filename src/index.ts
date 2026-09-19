@@ -14,7 +14,7 @@ function output(value: unknown) {
 }
 
 function createServer(env: Env) {
-  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.3.0" });
+  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.3.1" });
   server.registerTool("list_applications", { description: "List every Zoho Creator application accessible to the configured account.", inputSchema: {}, annotations: readOnly }, async () => output(await zohoGet(env, "/creator/v2.1/meta/applications")));
   server.registerTool("list_components", { description: "List forms, reports, pages, or sections in a Zoho Creator application.", inputSchema: { app_link_name: linkName, component: z.enum(["forms", "reports", "pages", "sections"]), environment }, annotations: readOnly }, async ({ app_link_name, component, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -34,7 +34,19 @@ function createServer(env: Env) {
   });
   server.registerTool("get_record_file", { description: "Download an image or file attached to one field of a Creator report record.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), field_link_name: linkName, environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, field_link_name, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
-    const file = await zohoGetFile(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}/${field_link_name}/download`, environment);
+    const recordResponse = await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, {}, environment) as { data?: Array<Record<string, unknown>> };
+    const record = recordResponse.data?.[0];
+    const fieldValue = record?.[field_link_name];
+    if (typeof fieldValue !== "string" || !fieldValue) throw new Error("The requested record field does not contain a downloadable file");
+
+    const fieldUrl = new URL(fieldValue, "https://creator.zoho.com");
+    const filepath = fieldUrl.searchParams.get("filepath") || undefined;
+    const file = await zohoGetFile(
+      env,
+      `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}/${field_link_name}/download`,
+      { filepath },
+      environment
+    );
     return { content: [{ type: "image" as const, data: file.data, mimeType: file.mimeType }] };
   });
   return server;
