@@ -94,6 +94,7 @@ export function oauthMetadata(request: Request): Response {
   const base = origin(request);
   return json({
     issuer: base,
+    authorization_response_iss_parameter_supported: true,
     authorization_endpoint: `${base}/authorize`,
     token_endpoint: `${base}/token`,
     registration_endpoint: `${base}/register`,
@@ -200,7 +201,8 @@ export async function authorize(request: Request, env: Env): Promise<Response> {
   const destination = new URL(input.redirect_uri);
   destination.searchParams.set("code", await sign(env, code as unknown as Json));
   if (input.state) destination.searchParams.set("state", input.state);
-  return Response.redirect(destination.toString(), 302);
+  destination.searchParams.set("iss", origin(request));
+  return Response.redirect(destination.toString(), 303);
 }
 
 export async function exchangeToken(request: Request, env: Env): Promise<Response> {
