@@ -3,7 +3,12 @@ export interface Env {
   ZOHO_CLIENT_ID: string;
   ZOHO_CLIENT_SECRET: string;
   ZOHO_REFRESH_TOKEN: string;
+  /** Existing name supported for compatibility. */
+  ZOHO_ACCOUNTS_URL?: string;
+  /** Legacy alias also supported. */
   ZOHO_ACCOUNTS_DOMAIN?: string;
+  /** Optional fallback; the api_domain returned by Zoho takes precedence. */
+  ZOHO_API_DOMAIN?: string;
   ZOHO_ACCOUNT_OWNER: string;
 }
 
@@ -26,7 +31,7 @@ export function safeEnvironment(value: string): string {
 async function token(env: Env): Promise<TokenCache> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) return tokenCache;
 
-  const accounts = new URL(env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com");
+  const accounts = new URL(env.ZOHO_ACCOUNTS_URL || env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com");
   if (accounts.protocol !== "https:" || !/^accounts\.zoho\.(com|eu|in|com\.au|jp|ca|sa)$/.test(accounts.hostname)) {
     throw new Error("ZOHO_ACCOUNTS_DOMAIN is not an approved Zoho accounts host");
   }
@@ -41,7 +46,7 @@ async function token(env: Env): Promise<TokenCache> {
   if (!response.ok || typeof data.access_token !== "string") {
     throw new Error(`Zoho token refresh failed (HTTP ${response.status})`);
   }
-  const apiDomain = String(data.api_domain || "");
+  const apiDomain = String(data.api_domain || env.ZOHO_API_DOMAIN || "");
   const apiUrl = new URL(apiDomain);
   if (apiUrl.protocol !== "https:" || !/^www\.zohoapis\.(com|eu|in|com\.au|jp|ca|sa)$/.test(apiUrl.hostname)) {
     throw new Error("Zoho returned an unapproved API domain");
