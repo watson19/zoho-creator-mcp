@@ -84,6 +84,34 @@ export async function zohoGet(
   return data;
 }
 
+export async function zohoGetPage(
+  env: Env,
+  path: string,
+  query: Record<string, string | number | undefined> = {},
+  recordCursor?: string,
+  environment = "production"
+): Promise<Record<string, unknown>> {
+  const credentials = await token(env);
+  const url = new URL(path, credentials.apiDomain);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+  }
+  const headers: Record<string, string> = { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` };
+  if (recordCursor) headers.record_cursor = recordCursor;
+  if (environment !== "production") headers.environment = safeEnvironment(environment);
+
+  const response = await fetch(url, { headers });
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || (typeof data.code === "number" && data.code !== 3000)) {
+    const message = typeof data.message === "string" ? data.message : "Zoho request failed";
+    throw new Error(`${message} (HTTP ${response.status})`);
+  }
+
+  const nextCursor = response.headers.get("record_cursor");
+  if (nextCursor && typeof data.record_cursor !== "string") data.record_cursor = nextCursor;
+  return data;
+}
+
 export async function zohoGetFile(
   env: Env,
   path: string,
