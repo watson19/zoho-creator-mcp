@@ -1,5 +1,9 @@
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+
 export interface Env {
   MCP_SHARED_SECRET: string;
+  OAUTH_KV: KVNamespace;
+  OAUTH_PROVIDER: OAuthHelpers;
   ZOHO_CLIENT_ID: string;
   ZOHO_CLIENT_SECRET: string;
   ZOHO_REFRESH_TOKEN: string;
