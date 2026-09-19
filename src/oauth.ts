@@ -198,11 +198,27 @@ export async function authorize(request: Request, env: Env): Promise<Response> {
     code_challenge: input.code_challenge, scope: "mcp", resource: input.resource || protectedResource(request),
     exp: now + 300, nonce: randomValue()
   };
-  const destination = new URL(input.redirect_uri);
-  destination.searchParams.set("code", await sign(env, code as unknown as Json));
-  if (input.state) destination.searchParams.set("state", input.state);
+  const completion = new URL("/oauth/complete", origin(request));
+  completion.searchParams.set("code", await sign(env, code as unknown as Json));
+  if (input.state) completion.searchParams.set("state", input.state);
+  return Response.redirect(completion.toString(), 303);
+}
+
+export async function completeAuthorization(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
+  const source = new URL(request.url).searchParams;
+  const signedCode = source.get("code") || "";
+  const code = await verify<AuthCode & Json>(env, signedCode);
+  const now = Math.floor(Date.now() / 1000);
+  if (!code || code.type !== "authorization_code" || code.exp < now || !validRedirect(code.redirect_uri)) {
+    return json({ error: "invalid_request", error_description: "Invalid or expired OAuth authorization response" }, 400);
+  }
+  const destination = new URL(code.redirect_uri);
+  destination.searchParams.set("code", signedCode);
+  const state = source.get("state");
+  if (state) destination.searchParams.set("state", state);
   destination.searchParams.set("iss", origin(request));
-  return Response.redirect(destination.toString(), 303);
+  return Response.redirect(destination.toString(), 302);
 }
 
 export async function exchangeToken(request: Request, env: Env): Promise<Response> {
