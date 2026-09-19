@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development. Never commit real values.
+MCP_SHARED_SECRET="replace-with-a-long-random-secret"
+ZOHO_CLIENT_ID="replace-me"
+ZOHO_CLIENT_SECRET="replace-me"
+ZOHO_REFRESH_TOKEN="replace-me"
+ZOHO_ACCOUNTS_DOMAIN="https://accounts.zoho.com"
+ZOHO_ACCOUNT_OWNER="idiomaswatson"
