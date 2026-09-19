@@ -1,8 +1,9 @@
 # Copy to .dev.vars for local development. Never commit real values.
+# This secret both protects the OAuth approval screen and signs OAuth tokens.
 MCP_SHARED_SECRET="replace-with-a-long-random-secret"
 ZOHO_CLIENT_ID="reuse-your-existing-client-id"
 ZOHO_CLIENT_SECRET="reuse-your-existing-client-secret"
-ZOHO_REFRESH_TOKEN="create-or-reuse-a-token-with-the-required-read-scopes"
+ZOHO_REFRESH_TOKEN="create-or-reuse-a-token-with-the-required-scopes"
 ZOHO_ACCOUNTS_URL="https://accounts.zoho.com"
 ZOHO_API_DOMAIN="https://www.zohoapis.com"
 ZOHO_ACCOUNT_OWNER="idiomaswatson"
