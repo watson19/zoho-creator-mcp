@@ -3,7 +3,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { authorize } from "./oauth";
-import { type Env, safeLinkName, zohoGet, zohoGetFile } from "./zoho";
+import { type Env, safeLinkName, zohoGet, zohoGetFile, zohoGetPage } from "./zoho";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const linkName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -14,7 +14,7 @@ function output(value: unknown) {
 }
 
 function createServer(env: Env) {
-  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.3.1" });
+  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.4.0" });
   server.registerTool("list_applications", { description: "List every Zoho Creator application accessible to the configured account.", inputSchema: {}, annotations: readOnly }, async () => output(await zohoGet(env, "/creator/v2.1/meta/applications")));
   server.registerTool("list_components", { description: "List forms, reports, pages, or sections in a Zoho Creator application.", inputSchema: { app_link_name: linkName, component: z.enum(["forms", "reports", "pages", "sections"]), environment }, annotations: readOnly }, async ({ app_link_name, component, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -24,9 +24,50 @@ function createServer(env: Env) {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
     return output(await zohoGet(env, `/creator/v2.1/meta/${owner}/${app_link_name}/form/${form_link_name}/fields`, {}, environment));
   });
-  server.registerTool("get_records", { description: "Read records from a Creator report. Results are capped at 200 records per call.", inputSchema: { app_link_name: linkName, report_link_name: linkName, criteria: z.string().max(2000).optional(), from: z.number().int().min(1).default(1), limit: z.number().int().min(1).max(200).default(200), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, criteria, from, limit, environment }) => {
+  server.registerTool("get_records", { description: "Read one cursor-based page from a Creator report. Pass the returned record_cursor into the next call. Zoho v2.1 supports 200, 500, or 1000 records per page.", inputSchema: { app_link_name: linkName, report_link_name: linkName, criteria: z.string().max(2000).optional(), record_cursor: z.string().min(1).max(2000).optional(), max_records: z.union([z.literal(200), z.literal(500), z.literal(1000)]).default(1000), field_config: z.enum(["quick_view", "detail_view", "all"]).default("quick_view"), fields: z.array(linkName).min(1).max(100).optional(), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, criteria, record_cursor, max_records, field_config, fields, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
-    return output(await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`, { criteria, from, limit }, environment));
+    return output(await zohoGetPage(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`, {
+      criteria,
+      max_records,
+      field_config: fields?.length ? "custom" : field_config,
+      fields: fields?.join(",")
+    }, record_cursor, environment));
+  });
+  server.registerTool("count_records", { description: "Count every record matching optional criteria by following Zoho's record_cursor across all pages. Only record IDs are fetched.", inputSchema: { app_link_name: linkName, report_link_name: linkName, criteria: z.string().max(2000).optional(), max_pages: z.number().int().min(1).max(100).default(100), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, criteria, max_pages, environment }) => {
+    const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+    const path = `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`;
+    let cursor: string | undefined;
+    let count = 0;
+    let pages = 0;
+    const seen = new Set<string>();
+    do {
+      const page = await zohoGetPage(env, path, { criteria, max_records: 1000, field_config: "custom", fields: "ID" }, cursor, environment);
+      count += Array.isArray(page.data) ? page.data.length : 0;
+      pages += 1;
+      const next = typeof page.record_cursor === "string" && page.record_cursor ? page.record_cursor : undefined;
+      if (next && seen.has(next)) throw new Error("Zoho returned a repeated record_cursor");
+      if (next) seen.add(next);
+      cursor = next;
+    } while (cursor && pages < max_pages);
+    return output({ code: 3000, count, pages, complete: !cursor, record_cursor: cursor });
+  });
+  server.registerTool("get_all_records", { description: "Read selected fields from consecutive Creator pages automatically. Fields are required to keep large report responses manageable.", inputSchema: { app_link_name: linkName, report_link_name: linkName, fields: z.array(linkName).min(1).max(50), criteria: z.string().max(2000).optional(), max_pages: z.number().int().min(1).max(20).default(10), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, fields, criteria, max_pages, environment }) => {
+    const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+    const path = `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`;
+    const records: unknown[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    const seen = new Set<string>();
+    do {
+      const page = await zohoGetPage(env, path, { criteria, max_records: 1000, field_config: "custom", fields: fields.join(",") }, cursor, environment);
+      if (Array.isArray(page.data)) records.push(...page.data);
+      pages += 1;
+      const next = typeof page.record_cursor === "string" && page.record_cursor ? page.record_cursor : undefined;
+      if (next && seen.has(next)) throw new Error("Zoho returned a repeated record_cursor");
+      if (next) seen.add(next);
+      cursor = next;
+    } while (cursor && pages < max_pages);
+    return output({ code: 3000, data: records, count: records.length, pages, complete: !cursor, record_cursor: cursor });
   });
   server.registerTool("get_record", { description: "Read one record by its numeric ID from a Creator report.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -61,7 +102,7 @@ const apiHandler = {
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.3.1", mode: "read-only", authentication: "cloudflare-oauth-provider" });
+    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.4.0", mode: "read-only", authentication: "cloudflare-oauth-provider" });
     if (url.pathname === "/authorize") return authorize(request, env);
     return new Response("Not Found", { status: 404 });
   }
