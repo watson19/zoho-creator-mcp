@@ -4,6 +4,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { authorize } from "./oauth";
 import { type Env, safeLinkName, zohoGet, zohoGetFile, zohoGetPage } from "./zoho";
+import { registerWriteTools } from "./writes";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const linkName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -13,8 +14,9 @@ function output(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: value as Record<string, unknown> };
 }
 
-function createServer(env: Env) {
-  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.4.0" });
+export function createServer(env: Env) {
+  const mode = env.ACCESS_MODE === "read_write" ? "read-write" : "read-only";
+  const server = new McpServer({ name: `zoho-creator-${mode}`, version: "0.5.0" });
   server.registerTool("list_applications", { description: "List every Zoho Creator application accessible to the configured account.", inputSchema: {}, annotations: readOnly }, async () => output(await zohoGet(env, "/creator/v2.1/meta/applications")));
   server.registerTool("list_components", { description: "List forms, reports, pages, or sections in a Zoho Creator application.", inputSchema: { app_link_name: linkName, component: z.enum(["forms", "reports", "pages", "sections"]), environment }, annotations: readOnly }, async ({ app_link_name, component, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -90,19 +92,20 @@ function createServer(env: Env) {
     );
     return { content: [{ type: "image" as const, data: file.data, mimeType: file.mimeType }] };
   });
+  if (env.ACCESS_MODE === "read_write") registerWriteTools(server, env);
   return server;
 }
 
-const apiHandler = {
+export const apiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return createMcpHandler(() => createServer(env))(request, env, ctx);
   }
 } satisfies ExportedHandler<Env>;
 
-const defaultHandler = {
+export const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.4.0", mode: "read-only", authentication: "cloudflare-oauth-provider" });
+    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.5.0", mode: env.ACCESS_MODE === "read_write" ? "read-write" : "read-only", authentication: "cloudflare-oauth-provider" });
     if (url.pathname === "/authorize") return authorize(request, env);
     return new Response("Not Found", { status: 404 });
   }
