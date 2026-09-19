@@ -3,7 +3,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { authorize } from "./oauth";
-import { type Env, safeLinkName, zohoGet } from "./zoho";
+import { type Env, safeLinkName, zohoGet, zohoGetFile } from "./zoho";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const linkName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -14,7 +14,7 @@ function output(value: unknown) {
 }
 
 function createServer(env: Env) {
-  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.2.0" });
+  const server = new McpServer({ name: "zoho-creator-read-only", version: "0.3.0" });
   server.registerTool("list_applications", { description: "List every Zoho Creator application accessible to the configured account.", inputSchema: {}, annotations: readOnly }, async () => output(await zohoGet(env, "/creator/v2.1/meta/applications")));
   server.registerTool("list_components", { description: "List forms, reports, pages, or sections in a Zoho Creator application.", inputSchema: { app_link_name: linkName, component: z.enum(["forms", "reports", "pages", "sections"]), environment }, annotations: readOnly }, async ({ app_link_name, component, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -31,6 +31,11 @@ function createServer(env: Env) {
   server.registerTool("get_record", { description: "Read one record by its numeric ID from a Creator report.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
     return output(await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, {}, environment));
+  });
+  server.registerTool("get_record_file", { description: "Download an image or file attached to one field of a Creator report record.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), field_link_name: linkName, environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, field_link_name, environment }) => {
+    const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+    const file = await zohoGetFile(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}/${field_link_name}/download`, environment);
+    return { content: [{ type: "image" as const, data: file.data, mimeType: file.mimeType }] };
   });
   return server;
 }
