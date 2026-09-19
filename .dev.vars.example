@@ -1,7 +1,8 @@
 # Copy to .dev.vars for local development. Never commit real values.
 MCP_SHARED_SECRET="replace-with-a-long-random-secret"
-ZOHO_CLIENT_ID="replace-me"
-ZOHO_CLIENT_SECRET="replace-me"
-ZOHO_REFRESH_TOKEN="replace-me"
-ZOHO_ACCOUNTS_DOMAIN="https://accounts.zoho.com"
+ZOHO_CLIENT_ID="reuse-your-existing-client-id"
+ZOHO_CLIENT_SECRET="reuse-your-existing-client-secret"
+ZOHO_REFRESH_TOKEN="create-or-reuse-a-token-with-the-required-read-scopes"
+ZOHO_ACCOUNTS_URL="https://accounts.zoho.com"
+ZOHO_API_DOMAIN="https://www.zohoapis.com"
 ZOHO_ACCOUNT_OWNER="idiomaswatson"
