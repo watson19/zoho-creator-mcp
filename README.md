@@ -1,10 +1,10 @@
 # Zoho Creator MCP
 
-A Cloudflare Worker that gives an MCP client strictly read-only access to Zoho Creator.
+A Cloudflare Worker that gives ChatGPT OAuth-protected, read-only access to Zoho Creator.
 
 ## Safety boundary
 
-This server contains no create, update, or delete tools. It exposes only:
+The MCP server contains no create, update, or delete tools. It exposes only:
 
 - `list_applications`
 - `list_components` for forms, reports, pages, and sections
@@ -12,13 +12,35 @@ This server contains no create, update, or delete tools. It exposes only:
 - `get_records` (maximum 200 rows per call)
 - `get_record`
 
-Every tool is annotated read-only. Zoho link names are validated, arbitrary URLs are rejected, and the server fails closed unless `MCP_SHARED_SECRET` is configured.
+Every tool is annotated read-only. Zoho link names are validated, arbitrary URLs are rejected, and `/mcp` fails closed unless the request carries a valid OAuth access token.
+
+## ChatGPT authentication
+
+The Worker implements a private OAuth 2.1 authorization-code flow with:
+
+- OAuth authorization-server metadata
+- OAuth protected-resource metadata
+- dynamic client registration
+- PKCE using `S256`
+- short-lived, signed authorization codes
+- signed 30-day access tokens
+- exact redirect-URI and audience validation
+
+The OAuth approval page asks the owner for `MCP_SHARED_SECRET`. The secret is never sent to ChatGPT. It stays in the browser-to-Worker authorization request and is also used by the Worker to sign tokens. Changing `MCP_SHARED_SECRET` immediately invalidates all existing OAuth clients, codes, and access tokens.
+
+Add the server in ChatGPT developer mode using:
+
+```text
+https://<worker-host>/mcp
+```
+
+Choose **OAuth**. ChatGPT discovers the remaining endpoints automatically.
 
 ## Zoho OAuth setup
 
-Create a Zoho refresh token with these Creator and Forms scopes:
+The current Zoho refresh token may include these Creator and Forms scopes:
 
-```
+```text
 ZohoCreator.dashboard.READ
 ZohoCreator.meta.application.READ
 ZohoCreator.meta.form.READ
@@ -29,45 +51,40 @@ ZohoCreator.report.DELETE
 ZohoForms.forms.ALL
 ```
 
-The token is authorised for future read/write work, but this MCP release intentionally registers read-only tools only. Adding mutation tools requires a separate reviewed change with confirmation and audit safeguards.
+The Zoho token is authorised for possible future read/write work, but this MCP release intentionally registers read-only tools only. Adding mutation tools requires a separate reviewed change with confirmation and audit safeguards.
 
-Use the `.com` accounts domain for this account. The server then uses the `api_domain` Zoho returns, so the Creator data endpoint is never guessed or hard-coded.
-
-Configuration:
+## Cloudflare runtime configuration
 
 | Name | Store as | Notes |
 |---|---|---|
-| `MCP_SHARED_SECRET` | encrypted secret | Long random value |
-| `ZOHO_CLIENT_ID` | encrypted secret | Your existing client ID can be reused |
-| `ZOHO_CLIENT_SECRET` | encrypted secret | Your existing client secret can be reused |
-| `ZOHO_REFRESH_TOKEN` | encrypted secret | Must include the required Creator READ scopes |
-| `ZOHO_ACCOUNT_OWNER` | variable | Set to `idiomaswatson` |
-| `ZOHO_ACCOUNTS_URL` | variable | Your existing name is supported; defaults to `https://accounts.zoho.com` |
-| `ZOHO_API_DOMAIN` | variable | Optional fallback; Zoho's token response takes precedence |
+| `MCP_SHARED_SECRET` | encrypted secret | Long random value; OAuth approval and signing key |
+| `ZOHO_CLIENT_ID` | encrypted secret | Existing Zoho client ID |
+| `ZOHO_CLIENT_SECRET` | encrypted secret | Existing Zoho client secret |
+| `ZOHO_REFRESH_TOKEN` | encrypted secret | Zoho refresh token with the required scopes |
+| `ZOHO_ACCOUNT_OWNER` | variable | `idiomaswatson` |
+| `ZOHO_ACCOUNTS_URL` | variable | `https://accounts.zoho.com` |
+| `ZOHO_API_DOMAIN` | variable | `https://www.zohoapis.com` fallback |
 
-The older name `ZOHO_ACCOUNTS_DOMAIN` also remains supported.
+The older name `ZOHO_ACCOUNTS_DOMAIN` remains supported.
 
-## Local development
+## Endpoints
 
-```bash
-npm install
-cp .dev.vars.example .dev.vars
-npm run dev
-```
-
-The MCP endpoint is `/mcp`; `/health` returns only a non-sensitive status response. Send `Authorization: Bearer <MCP_SHARED_SECRET>` for all MCP requests.
-
-## Cloudflare deployment
-
-Connect this repository in **Workers & Pages → Create → Import a repository**, then add the five required values as encrypted Worker secrets. Set the production branch to `main`. Cloudflare can then redeploy automatically after reviewed changes are merged.
-
-Before adding the server to ChatGPT, replace the development shared-secret gate with an OAuth-compatible Cloudflare Access/OAuth flow. Do not expose the Worker without an authentication layer.
+- `/mcp` — OAuth-protected streamable HTTP MCP endpoint
+- `/health` — non-sensitive service status
+- `/.well-known/oauth-protected-resource` — protected-resource metadata
+- `/.well-known/oauth-protected-resource/mcp` — path-specific protected-resource metadata
+- `/.well-known/oauth-authorization-server` — authorization-server metadata
+- `/register` — dynamic client registration
+- `/authorize` — owner authorization screen
+- `/token` — PKCE authorization-code exchange
 
 ## Commands
 
 ```bash
+npm install
 npm run typecheck
+npm run dev
 npm run deploy
 ```
 
-Never commit `.dev.vars`, OAuth tokens, or client secrets.
+Never commit `.dev.vars`, OAuth tokens, Zoho credentials, or the shared secret.

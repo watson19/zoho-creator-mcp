@@ -3,11 +3,8 @@ export interface Env {
   ZOHO_CLIENT_ID: string;
   ZOHO_CLIENT_SECRET: string;
   ZOHO_REFRESH_TOKEN: string;
-  /** Existing name supported for compatibility. */
   ZOHO_ACCOUNTS_URL?: string;
-  /** Legacy alias also supported. */
   ZOHO_ACCOUNTS_DOMAIN?: string;
-  /** Optional fallback; the api_domain returned by Zoho takes precedence. */
   ZOHO_API_DOMAIN?: string;
   ZOHO_ACCOUNT_OWNER: string;
 }
@@ -33,7 +30,7 @@ async function token(env: Env): Promise<TokenCache> {
 
   const accounts = new URL(env.ZOHO_ACCOUNTS_URL || env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com");
   if (accounts.protocol !== "https:" || !/^accounts\.zoho\.(com|eu|in|com\.au|jp|ca|sa)$/.test(accounts.hostname)) {
-    throw new Error("ZOHO_ACCOUNTS_DOMAIN is not an approved Zoho accounts host");
+    throw new Error("ZOHO_ACCOUNTS_URL is not an approved Zoho accounts host");
   }
   const body = new URLSearchParams({
     refresh_token: env.ZOHO_REFRESH_TOKEN,
@@ -70,9 +67,7 @@ export async function zohoGet(
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   }
-  const headers: Record<string, string> = {
-    Authorization: `Zoho-oauthtoken ${credentials.accessToken}`
-  };
+  const headers: Record<string, string> = { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` };
   if (environment !== "production") headers.environment = safeEnvironment(environment);
 
   const response = await fetch(url, { headers });
