@@ -27,23 +27,19 @@ ZohoCreator.report.READ
 
 Use the `.com` accounts domain for this account. The server then uses the `api_domain` Zoho returns, so the Creator data endpoint is never guessed or hard-coded.
 
-Required Worker secrets:
+Configuration:
 
-```
-MCP_SHARED_SECRET
-ZOHO_CLIENT_ID
-ZOHO_CLIENT_SECRET
-ZOHO_REFRESH_TOKEN
-ZOHO_ACCOUNT_OWNER
-```
+| Name | Store as | Notes |
+|---|---|---|
+| `MCP_SHARED_SECRET` | encrypted secret | Long random value |
+| `ZOHO_CLIENT_ID` | encrypted secret | Your existing client ID can be reused |
+| `ZOHO_CLIENT_SECRET` | encrypted secret | Your existing client secret can be reused |
+| `ZOHO_REFRESH_TOKEN` | encrypted secret | Must include the required Creator READ scopes |
+| `ZOHO_ACCOUNT_OWNER` | variable | Set to `idiomaswatson` |
+| `ZOHO_ACCOUNTS_URL` | variable | Your existing name is supported; defaults to `https://accounts.zoho.com` |
+| `ZOHO_API_DOMAIN` | variable | Optional fallback; Zoho's token response takes precedence |
 
-Optional variable (defaults to `https://accounts.zoho.com`):
-
-```
-ZOHO_ACCOUNTS_DOMAIN
-```
-
-Set `ZOHO_ACCOUNT_OWNER` to `idiomaswatson`.
+The older name `ZOHO_ACCOUNTS_DOMAIN` also remains supported.
 
 ## Local development
 
