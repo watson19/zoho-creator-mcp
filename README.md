@@ -1,10 +1,13 @@
 # Zoho Creator MCP
 
-A Cloudflare Worker that gives ChatGPT OAuth-protected, read-only access to Zoho Creator.
+A Cloudflare Worker project that deploys two separately authorised ChatGPT connectors for Zoho Creator:
+
+- `zoho-creator-mcp` — read-only, intended for delegated users
+- `zoho-creator-admin-mcp` — read/write, intended only for the owner
 
 ## Safety boundary
 
-The MCP server contains no create, update, or delete tools. It exposes only:
+The read-only Worker exposes only:
 
 - `list_applications`
 - `list_components` for forms, reports, pages, and sections
@@ -16,6 +19,14 @@ The MCP server contains no create, update, or delete tools. It exposes only:
 - `get_record_file`
 
 Every tool is annotated read-only. Zoho link names are validated, arbitrary URLs are rejected, and `/mcp` fails closed unless the request carries a valid OAuth access token.
+
+The separate admin Worker adds:
+
+- `prepare_create_record` and `create_record`
+- `prepare_update_record` and `update_record`
+- `list_audit_events`
+
+The admin Worker deliberately has no delete or bulk-update tool. Writes are denied unless `ACCESS_MODE=read_write`; targets must be present in the server-side allowlists. Every mutation requires a short-lived confirmation token generated from an exact preview, updates abort if the record changed after preparation, successful writes are read back for verification, and audit events are retained for 90 days by default.
 
 ## ChatGPT authentication
 
@@ -31,13 +42,15 @@ The Worker implements a private OAuth 2.1 authorization-code flow with:
 
 The OAuth approval page asks the owner for `MCP_SHARED_SECRET`. The secret is never sent to ChatGPT. It stays in the browser-to-Worker authorization request and is also used by the Worker to sign tokens. Changing `MCP_SHARED_SECRET` immediately invalidates all existing OAuth clients, codes, and access tokens.
 
-Add the server in ChatGPT developer mode using:
+Add the read-only server in ChatGPT developer mode using:
 
 ```text
 https://<worker-host>/mcp
 ```
 
 Choose **OAuth**. ChatGPT discovers the remaining endpoints automatically.
+
+The admin connector uses its own Worker URL and a different `MCP_SHARED_SECRET`. Never give the admin URL or secret to a read-only user.
 
 ## Zoho OAuth setup
 
@@ -68,6 +81,16 @@ The Zoho token is authorised for possible future read/write work, but this MCP r
 | `ZOHO_ACCOUNTS_URL` | variable | `https://accounts.zoho.com` |
 | `ZOHO_API_DOMAIN` | variable | `https://www.zohoapis.com` fallback |
 
+Admin-only variables:
+
+| Name | Example | Purpose |
+|---|---|---|
+| `ACCESS_MODE` | `read_write` | Enables registration and execution of mutation tools |
+| `WRITE_ALLOWED_APPS` | `estudiantes` | Comma-separated app allowlist |
+| `WRITE_ALLOWED_FORMS` | `estudiantes/Informacion` | Comma-separated create/update form allowlist |
+| `WRITE_ALLOWED_REPORTS` | `estudiantes/All_Students` | Comma-separated verification/update report allowlist |
+| `AUDIT_RETENTION_DAYS` | `90` | Audit-event retention, clamped to 1–365 days |
+
 The older name `ZOHO_ACCOUNTS_DOMAIN` remains supported.
 
 ## Endpoints
@@ -88,6 +111,9 @@ npm install
 npm run typecheck
 npm run dev
 npm run deploy
+npm run deploy:admin
 ```
+
+The two Workers must be configured with different `MCP_SHARED_SECRET` values. For strongest least privilege, also give the read-only Worker a Zoho refresh token containing only read scopes and give the admin Worker the read/write token.
 
 Never commit `.dev.vars`, OAuth tokens, Zoho credentials, or the shared secret.
