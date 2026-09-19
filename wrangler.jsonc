@@ -13,6 +13,7 @@
   "workers_dev": true,
   "preview_urls": true,
   "vars": {
+    "ACCESS_MODE": "read_only",
     "ZOHO_ACCOUNT_OWNER": "idiomaswatson",
     "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
     "ZOHO_API_DOMAIN": "https://www.zohoapis.com"
