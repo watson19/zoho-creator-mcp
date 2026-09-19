@@ -61,7 +61,7 @@ const apiHandler = {
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", mode: "read-only", authentication: "cloudflare-oauth-provider" });
+    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.3.1", mode: "read-only", authentication: "cloudflare-oauth-provider" });
     if (url.pathname === "/authorize") return authorize(request, env);
     return new Response("Not Found", { status: 404 });
   }
