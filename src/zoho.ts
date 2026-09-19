@@ -87,10 +87,14 @@ export async function zohoGet(
 export async function zohoGetFile(
   env: Env,
   path: string,
+  query: Record<string, string | number | undefined> = {},
   environment = "production"
 ): Promise<{ data: string; mimeType: string }> {
   const credentials = await token(env);
   const url = new URL(path, credentials.apiDomain);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+  }
   const headers: Record<string, string> = { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` };
   if (environment !== "production") headers.environment = safeEnvironment(environment);
 
