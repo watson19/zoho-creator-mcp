@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
-import { authorize, bearerIsValid, exchangeToken, oauthMetadata, registerClient, resourceMetadata } from "./oauth";
+import { authorize, bearerIsValid, completeAuthorization, exchangeToken, oauthMetadata, registerClient, resourceMetadata } from "./oauth";
 import { type Env, safeLinkName, zohoGet } from "./zoho";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -50,6 +50,7 @@ export default {
     if (url.pathname === "/.well-known/oauth-authorization-server") return oauthMetadata(request);
     if (url.pathname === "/register") return registerClient(request, env);
     if (url.pathname === "/authorize") return authorize(request, env);
+    if (url.pathname === "/oauth/complete") return completeAuthorization(request, env);
     if (url.pathname === "/token") return exchangeToken(request, env);
     if (url.pathname !== "/mcp") return new Response("Not Found", { status: 404 });
     if (!await bearerIsValid(request, env)) return oauthUnauthorized(request);
