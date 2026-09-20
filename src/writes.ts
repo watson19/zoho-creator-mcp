@@ -90,6 +90,10 @@ function containsExpected(actual: unknown, expected: unknown): boolean {
   if (Array.isArray(expected)) {
     return Array.isArray(actual) && actual.length === expected.length && expected.every((value, index) => containsExpected(actual[index], value));
   }
+  if (actual && typeof actual === "object" && !Array.isArray(actual) && (!expected || typeof expected !== "object")) {
+    const actualObject = actual as JsonRecord;
+    return ["ID", "id", "display_value", "value"].some((key) => key in actualObject && containsExpected(actualObject[key], expected));
+  }
   if (expected && typeof expected === "object") {
     if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
     const actualObject = actual as JsonRecord;
