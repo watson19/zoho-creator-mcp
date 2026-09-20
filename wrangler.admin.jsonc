@@ -16,7 +16,7 @@
     "ACCESS_MODE": "read_write",
     "WRITE_ALLOWED_APPS": "estudiantes",
     "WRITE_ALLOWED_FORMS": "estudiantes/Informacion,estudiantes/Clases",
-    "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students,estudiantes/Classes_List",
+    "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students,estudiantes/Classes_List,estudiantes/Webmessages",
     "AUDIT_RETENTION_DAYS": "90",
     "ZOHO_ACCOUNT_OWNER": "idiomaswatson",
     "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
