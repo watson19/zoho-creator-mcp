@@ -170,9 +170,14 @@ export async function zohoMutate(
   const resultItems = Array.isArray(data.result) ? data.result.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
   const failedResult = resultItems.find((item) => typeof item.code === "number" && item.code !== 3000);
   if (!response.ok || (typeof data.code === "number" && data.code !== 3000) || failedResult) {
+    const nestedError = failedResult?.error;
     const message = typeof failedResult?.message === "string"
       ? failedResult.message
-      : typeof data.message === "string" ? data.message : "Zoho mutation failed";
+      : nestedError && typeof nestedError === "object" && typeof (nestedError as Record<string, unknown>).message === "string"
+        ? String((nestedError as Record<string, unknown>).message)
+        : typeof data.message === "string"
+          ? data.message
+          : failedResult ? `Zoho mutation failed: ${JSON.stringify(failedResult)}` : "Zoho mutation failed";
     throw new Error(`${message} (HTTP ${response.status})`);
   }
   return data;
