@@ -189,7 +189,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     await consumeConfirmation(env, confirmation_token);
 
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
-    await zohoMutate(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`, "PATCH", { criteria: `ID == ${record_id}`, data, result: { fields: ["ID", ...Object.keys(data)], message: true } }, {}, environment);
+    await zohoMutate(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, "PATCH", { data, result: { fields: ["ID", ...Object.keys(data)], message: true } }, {}, environment);
     const after = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment), Object.keys(data));
     const mismatches = mismatchedFields(after, data);
     await audit(env, { action: "update", app_link_name, form_link_name, report_link_name, record_id, before, after, result: mismatches.length ? "verification_mismatch" : "verified", mismatched_fields: mismatches });
