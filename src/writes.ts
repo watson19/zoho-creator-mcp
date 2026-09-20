@@ -92,7 +92,7 @@ function containsExpected(actual: unknown, expected: unknown): boolean {
   }
   if (actual && typeof actual === "object" && !Array.isArray(actual) && (!expected || typeof expected !== "object")) {
     const actualObject = actual as JsonRecord;
-    return ["ID", "id", "display_value", "value"].some((key) => key in actualObject && containsExpected(actualObject[key], expected));
+    return ["ID", "id", "display_value", "zc_display_value", "value"].some((key) => key in actualObject && containsExpected(actualObject[key], expected));
   }
   if (expected && typeof expected === "object") {
     if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
