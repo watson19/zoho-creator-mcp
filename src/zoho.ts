@@ -177,7 +177,7 @@ export async function zohoMutate(
         ? String((nestedError as Record<string, unknown>).message)
         : typeof data.message === "string"
           ? data.message
-          : failedResult ? `Zoho mutation failed: ${JSON.stringify(failedResult)}` : "Zoho mutation failed";
+          : failedResult ? `Zoho mutation failed: ${JSON.stringify(failedResult)}` : `Zoho mutation failed: ${JSON.stringify(data)}`;
     throw new Error(`${message} (HTTP ${response.status})`);
   }
   return data;
