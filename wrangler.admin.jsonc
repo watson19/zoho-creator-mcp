@@ -3,7 +3,10 @@
   "name": "zoho-creator-admin-mcp",
   "main": "src/admin.ts",
   "compatibility_date": "2026-09-19",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -15,12 +18,14 @@
   "vars": {
     "ACCESS_MODE": "read_write",
     "WRITE_ALLOWED_APPS": "estudiantes",
-    "WRITE_ALLOWED_FORMS": "estudiantes/Informacion,estudiantes/Clases",
-    "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students,estudiantes/Classes_List,estudiantes/Webmessages",
+    "WRITE_ALLOWED_FORMS": "estudiantes/Informacion,estudiantes/Clases,estudiantes/Interviews",
+    "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students,estudiantes/Classes_List,estudiantes/Webmessages,estudiantes/All_Interviews,estudiantes/Interviews_Full_Export",
     "AUDIT_RETENTION_DAYS": "90",
     "ZOHO_ACCOUNT_OWNER": "idiomaswatson",
     "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
     "ZOHO_API_DOMAIN": "https://www.zohoapis.com"
   },
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true
+  }
 }
