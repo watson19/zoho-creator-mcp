@@ -1,8 +1,10 @@
+import { accountsOrigin, credentialKey, type CachedToken, type TokenCredentials } from "./token-cache";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
 export interface Env {
   MCP_SHARED_SECRET: string;
   OAUTH_KV: KVNamespace;
+  ZOHO_TOKEN_BROKER: DurableObjectNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
   ZOHO_CLIENT_ID: string;
   ZOHO_CLIENT_SECRET: string;
@@ -18,9 +20,6 @@ export interface Env {
   AUDIT_RETENTION_DAYS?: string;
 }
 
-type TokenCache = { accessToken: string; apiDomain: string; expiresAt: number };
-let tokenCache: TokenCache | undefined;
-
 const LINK_NAME = /^[A-Za-z0-9_-]+$/;
 const ENVIRONMENTS = new Set(["production", "development", "stage"]);
 
@@ -34,37 +33,24 @@ export function safeEnvironment(value: string): string {
   return value;
 }
 
-async function token(env: Env, forceRefresh = false): Promise<TokenCache> {
-  if (!forceRefresh && tokenCache && tokenCache.expiresAt > Date.now() + 60_000) return tokenCache;
-  if (forceRefresh) tokenCache = undefined;
-
-  const accounts = new URL(env.ZOHO_ACCOUNTS_URL || env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com");
-  if (accounts.protocol !== "https:" || !/^accounts\.zoho\.(com|eu|in|com\.au|jp|ca|sa)$/.test(accounts.hostname)) {
-    throw new Error("ZOHO_ACCOUNTS_URL is not an approved Zoho accounts host");
-  }
-  const body = new URLSearchParams({
-    refresh_token: env.ZOHO_REFRESH_TOKEN,
-    client_id: env.ZOHO_CLIENT_ID,
-    client_secret: env.ZOHO_CLIENT_SECRET,
-    grant_type: "refresh_token"
-  });
-  const response = await fetch(new URL("/oauth/v2/token", accounts), { method: "POST", body });
-  const data = await response.json() as Record<string, unknown>;
-  if (!response.ok || typeof data.access_token !== "string") {
-    const errorCode = typeof data.error === "string" ? data.error : "unknown_error";
-    throw new Error(`Zoho token refresh failed: ${errorCode} (HTTP ${response.status})`);
-  }
-  const apiDomain = String(data.api_domain || env.ZOHO_API_DOMAIN || "");
-  const apiUrl = new URL(apiDomain);
-  if (apiUrl.protocol !== "https:" || !/^www\.zohoapis\.(com|eu|in|com\.au|jp|ca|sa)$/.test(apiUrl.hostname)) {
-    throw new Error("Zoho returned an unapproved API domain");
-  }
-  tokenCache = {
-    accessToken: data.access_token,
-    apiDomain: apiUrl.origin,
-    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000
+async function token(env: Env, rejectedAccessToken?: string): Promise<CachedToken> {
+  if (!env.ZOHO_TOKEN_BROKER) throw new Error("Shared Zoho token coordinator is not configured");
+  const credentials: TokenCredentials = {
+    accountsUrl: accountsOrigin(env.ZOHO_ACCOUNTS_URL || env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com"),
+    clientId: env.ZOHO_CLIENT_ID,
+    clientSecret: env.ZOHO_CLIENT_SECRET,
+    refreshToken: env.ZOHO_REFRESH_TOKEN,
+    apiDomain: env.ZOHO_API_DOMAIN
   };
-  return tokenCache;
+  const key = await credentialKey(credentials);
+  const broker = env.ZOHO_TOKEN_BROKER.get(env.ZOHO_TOKEN_BROKER.idFromName(key));
+  const response = await broker.fetch(`https://token-broker/${key}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...credentials, rejectedAccessToken })
+  });
+  const data = await response.json() as CachedToken & { error?: string };
+  if (!response.ok) throw new Error(data.error || "Shared Zoho token coordinator failed");
+  return data;
 }
 
 export async function zohoGet(
@@ -73,8 +59,9 @@ export async function zohoGet(
   query: Record<string, string | number | undefined> = {},
   environment = "production"
 ): Promise<unknown> {
+  let rejectedAccessToken: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const credentials = await token(env, attempt === 1);
+    const credentials = await token(env, rejectedAccessToken);
     const url = new URL(path, credentials.apiDomain);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -84,7 +71,7 @@ export async function zohoGet(
 
     const response = await fetch(url, { headers });
     const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (response.status === 401 && attempt === 0) continue;
+    if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
     if (!response.ok || (typeof data.code === "number" && data.code !== 3000)) {
       const message = typeof data.message === "string" ? data.message : "Zoho request failed";
       throw new Error(`${message} (HTTP ${response.status})`);
@@ -101,8 +88,9 @@ export async function zohoGetPage(
   recordCursor?: string,
   environment = "production"
 ): Promise<Record<string, unknown>> {
+  let rejectedAccessToken: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const credentials = await token(env, attempt === 1);
+    const credentials = await token(env, rejectedAccessToken);
     const url = new URL(path, credentials.apiDomain);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -113,7 +101,7 @@ export async function zohoGetPage(
 
     const response = await fetch(url, { headers });
     const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (response.status === 401 && attempt === 0) continue;
+    if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
     if (!response.ok || (typeof data.code === "number" && data.code !== 3000)) {
       const message = typeof data.message === "string" ? data.message : "Zoho request failed";
       throw new Error(`${message} (HTTP ${response.status})`);
@@ -132,8 +120,9 @@ export async function zohoGetFile(
   query: Record<string, string | number | undefined> = {},
   environment = "production"
 ): Promise<{ data: string; mimeType: string }> {
+  let rejectedAccessToken: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const credentials = await token(env, attempt === 1);
+    const credentials = await token(env, rejectedAccessToken);
     const url = new URL(path, credentials.apiDomain);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -142,7 +131,7 @@ export async function zohoGetFile(
     if (environment !== "production") headers.environment = safeEnvironment(environment);
 
     const response = await fetch(url, { headers });
-    if (response.status === 401 && attempt === 0) continue;
+    if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
     if (!response.ok) throw new Error(`Zoho file download failed (HTTP ${response.status})`);
 
     const mimeType = (response.headers.get("content-type") || "application/octet-stream").split(";")[0];
@@ -167,8 +156,9 @@ export async function zohoMutate(
 ): Promise<Record<string, unknown>> {
   if (env.ACCESS_MODE !== "read_write") throw new Error("This connector is read-only");
 
+  let rejectedAccessToken: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const credentials = await token(env, attempt === 1);
+    const credentials = await token(env, rejectedAccessToken);
     const url = new URL(path, credentials.apiDomain);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -181,7 +171,7 @@ export async function zohoMutate(
 
     const response = await fetch(url, { method, headers, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (response.status === 401 && attempt === 0) continue;
+    if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
     const resultItems = Array.isArray(data.result) ? data.result.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
     const failedResult = resultItems.find((item) => typeof item.code === "number" && item.code !== 3000);
     if (!response.ok || (typeof data.code === "number" && data.code !== 3000) || failedResult) {

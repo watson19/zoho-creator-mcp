@@ -27,5 +27,21 @@
   },
   "observability": {
     "enabled": true
+  },
+  "migrations": [
+    {
+      "tag": "v1-zoho-token-broker",
+      "new_sqlite_classes": [
+        "ZohoTokenBroker"
+      ]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ZOHO_TOKEN_BROKER",
+        "class_name": "ZohoTokenBroker"
+      }
+    ]
   }
 }

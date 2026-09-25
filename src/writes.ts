@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type Env, safeLinkName, zohoGet, zohoMutate } from "./zoho";
 
@@ -74,16 +74,27 @@ async function validateFormFields(env: Env, app: string, form: string, data: Jso
   if (unknown.length) throw new Error(`Unknown form field link name(s): ${unknown.join(", ")}`);
 }
 
-async function getRecord(env: Env, app: string, report: string, id: string, envName: string): Promise<JsonRecord> {
+async function getRecord(env: Env, app: string, report: string, id: string, envName: string, fields: string[]): Promise<JsonRecord> {
   const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
-  const response = await zohoGet(env, `/creator/v2.1/data/${owner}/${app}/report/${report}/${id}`, {}, envName) as { data?: JsonRecord | JsonRecord[] };
+  const response = await zohoGet(env, `/creator/v2.1/data/${owner}/${app}/report/${report}/${id}`, { field_config: "custom", fields: [...new Set(["ID", ...fields])].join(",") }, envName) as { data?: JsonRecord | JsonRecord[] };
   const record = Array.isArray(response.data) ? response.data[0] : response.data;
   if (!record) throw new Error("Zoho record was not found");
+  const missing = fields.filter(field => !Object.prototype.hasOwnProperty.call(record, field));
+  if (missing.length) throw new Error(`Cannot verify fields missing from report ${app}/${report}: ${missing.join(", ")}. Make these fields readable in the authorised report.`);
   return record;
 }
 
 function subset(record: JsonRecord, fields: string[]): JsonRecord {
   return Object.fromEntries(fields.map((field) => [field, record[field] ?? null]));
+}
+
+async function readAfterWrite(env: Env, app: string, report: string, id: string, envName: string, fields: string[], action: "create" | "update"): Promise<JsonRecord> {
+  try {
+    return await getRecord(env, app, report, id, envName, fields);
+  } catch (error) {
+    await audit(env, { action, app_link_name: app, report_link_name: report, record_id: id, result: "verification_unavailable" }).catch(() => undefined);
+    throw new Error(`Zoho ${action === "create" ? "created" : "updated"} record ${id}, but read-back verification was unavailable. Do not retry automatically. ${error instanceof Error ? error.message : ""}`);
+  }
 }
 
 function containsExpected(actual: unknown, expected: unknown): boolean {
@@ -160,7 +171,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
     const result = await zohoMutate(env, `/creator/v2.1/data/${owner}/${app_link_name}/form/${form_link_name}`, "POST", { data, result: { fields: ["ID", ...Object.keys(data)], message: true } }, {}, environment);
     const id = createdRecordId(result);
-    const after = subset(await getRecord(env, app_link_name, verification_report_link_name, id, environment), ["ID", ...Object.keys(data)]);
+    const after = subset(await readAfterWrite(env, app_link_name, verification_report_link_name, id, environment, Object.keys(data), "create"), ["ID", ...Object.keys(data)]);
     const mismatches = mismatchedFields(after, data);
     await audit(env, { action: "create", app_link_name, form_link_name, report_link_name: verification_report_link_name, record_id: id, before: null, after, result: mismatches.length ? "verification_mismatch" : "verified", mismatched_fields: mismatches });
     if (mismatches.length) throw new Error(`Zoho created record ${id}, but read-back verification differed for: ${mismatches.join(", ")}. Do not retry automatically.`);
@@ -172,11 +183,11 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     assertWriteTarget(env, app_link_name, "report", report_link_name);
     validateData(data);
     await validateFormFields(env, app_link_name, form_link_name, data, environment);
-    const before = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment), Object.keys(data));
+    const before = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment, Object.keys(data)), Object.keys(data));
     const target = `${environment}:${app_link_name}:form:${form_link_name}:report:${report_link_name}:record:${record_id}`;
-    const prepared = await prepareConfirmation(env, { action: "update", target, payloadHash: await hash(data), beforeHash: await hash(before) });
     const changes = Object.keys(data).map((field) => ({ field, from: before[field], to: data[field] }));
     if (changes.every((change) => containsExpected(change.from, change.to))) throw new Error("The record already contains all proposed values; no update is needed");
+    const prepared = await prepareConfirmation(env, { action: "update", target, payloadHash: await hash(data), beforeHash: await hash(before) });
     return output({ action: "update", target: { app_link_name, form_link_name, report_link_name, record_id, environment }, changes, confirmation_token: prepared.confirmationToken, expires_at: prepared.expiresAt, requires_explicit_user_confirmation: true });
   });
 
@@ -186,7 +197,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     validateData(data);
     const target = `${environment}:${app_link_name}:form:${form_link_name}:report:${report_link_name}:record:${record_id}`;
     const confirmation = await readConfirmation(env, confirmation_token);
-    const before = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment), Object.keys(data));
+    const before = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment, Object.keys(data)), Object.keys(data));
     if (confirmation.action !== "update" || confirmation.target !== target || confirmation.payloadHash !== await hash(data) || confirmation.beforeHash !== await hash(before)) {
       throw new Error("The record or proposed update no longer matches the prepared preview; prepare it again");
     }
@@ -194,7 +205,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
 
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
     await zohoMutate(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, "PATCH", { data, result: { fields: ["ID", ...Object.keys(data)], message: true } }, {}, environment);
-    const after = subset(await getRecord(env, app_link_name, report_link_name, record_id, environment), Object.keys(data));
+    const after = subset(await readAfterWrite(env, app_link_name, report_link_name, record_id, environment, Object.keys(data), "update"), Object.keys(data));
     const mismatches = mismatchedFields(after, data);
     await audit(env, { action: "update", app_link_name, form_link_name, report_link_name, record_id, before, after, result: mismatches.length ? "verification_mismatch" : "verified", mismatched_fields: mismatches });
     if (mismatches.length) throw new Error(`Zoho updated record ${record_id}, but read-back verification differed for: ${mismatches.join(", ")}. Do not retry automatically.`);

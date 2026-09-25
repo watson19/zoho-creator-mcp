@@ -1,3 +1,4 @@
+export { ZohoTokenBroker } from "./token-broker";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { apiHandler, defaultHandler } from "./index";
 import type { Env } from "./zoho";
