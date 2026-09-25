@@ -3,7 +3,10 @@
   "name": "zoho-creator-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-19",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -18,5 +21,16 @@
     "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
     "ZOHO_API_DOMAIN": "https://www.zohoapis.com"
   },
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ZOHO_TOKEN_BROKER",
+        "class_name": "ZohoTokenBroker",
+        "script_name": "zoho-creator-admin-mcp"
+      }
+    ]
+  }
 }

@@ -67,7 +67,7 @@ ZohoCreator.report.DELETE
 ZohoForms.forms.ALL
 ```
 
-The Zoho token is authorised for possible future read/write work, but this MCP release intentionally registers read-only tools only. Adding mutation tools requires a separate reviewed change with confirmation and audit safeguards.
+The read-only Worker registers read tools only. The admin Worker registers the confirmed create/update tools described above; its allowlists and confirmation checks remain mandatory.
 
 ## Cloudflare runtime configuration
 
@@ -109,6 +109,7 @@ The older name `ZOHO_ACCOUNTS_DOMAIN` remains supported.
 ```bash
 npm install
 npm run typecheck
+npm test
 npm run dev
 npm run deploy
 npm run deploy:admin
@@ -117,3 +118,39 @@ npm run deploy:admin
 The two Workers must be configured with different `MCP_SHARED_SECRET` values. For strongest least privilege, also give the read-only Worker a Zoho refresh token containing only read scopes and give the admin Worker the read/write token.
 
 Never commit `.dev.vars`, OAuth tokens, Zoho credentials, or the shared secret.
+
+## Token coordination (v0.5.1)
+
+Zoho access tokens are cached in the SQLite-backed `ZohoTokenBroker` Durable
+Object hosted by the admin Worker. Both Workers bind to this coordinator. The
+object identity is a SHA-256 fingerprint of the Zoho OAuth credentials and account
+host, so different credentials remain isolated and credential rotation selects a
+new object. Client secrets and refresh tokens are sent only over the internal
+binding and are not persisted; the access token and expiry are persisted.
+
+Refreshes are coalesced into one in-flight request. A 401 invalidates only the
+access token that actually failed, so a concurrent request cannot invalidate its
+replacement. Token endpoint throttling persists a ten-minute cooldown. Error
+messages retain Zoho's explanation with credentials redacted.
+
+Deploy the admin Worker first (this creates the Durable Object), then the reader:
+
+```bash
+npm run deploy:admin
+npm run deploy
+```
+
+The GitHub deployment workflow performs that order after tests and type checks.
+Do not remove the broker binding from either Worker. Existing OAuth secrets,
+write allowlists, explicit preview confirmation, and audit behavior are preserved.
+
+## Required fields for write verification
+
+The write tools request `field_config=custom` and the exact fields being changed.
+If a field is absent from the authorised report response, preparation fails;
+missing fields are never interpreted as blank. Make fields such as `Hermanos`
+readable in the existing authorised report if Zoho still omits them. The connector
+does not switch reports or broaden write access to bypass this check.
+
+If a write succeeds but subsequent read-back is unavailable, the error explicitly
+states that the write occurred and must not be retried automatically.

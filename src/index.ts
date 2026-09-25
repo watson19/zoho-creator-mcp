@@ -16,7 +16,7 @@ function output(value: unknown) {
 
 export function createServer(env: Env) {
   const mode = env.ACCESS_MODE === "read_write" ? "read-write" : "read-only";
-  const server = new McpServer({ name: `zoho-creator-${mode}`, version: "0.5.0" });
+  const server = new McpServer({ name: `zoho-creator-${mode}`, version: "0.5.1" });
   server.registerTool("list_applications", { description: "List every Zoho Creator application accessible to the configured account.", inputSchema: {}, annotations: readOnly }, async () => output(await zohoGet(env, "/creator/v2.1/meta/applications")));
   server.registerTool("list_components", { description: "List forms, reports, pages, or sections in a Zoho Creator application.", inputSchema: { app_link_name: linkName, component: z.enum(["forms", "reports", "pages", "sections"]), environment }, annotations: readOnly }, async ({ app_link_name, component, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
@@ -105,7 +105,7 @@ export const apiHandler = {
 export const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.5.0", mode: env.ACCESS_MODE === "read_write" ? "read-write" : "read-only", authentication: "cloudflare-oauth-provider" });
+    if (url.pathname === "/health") return Response.json({ ok: true, service: "zoho-creator-mcp", version: "0.5.1", mode: env.ACCESS_MODE === "read_write" ? "read-write" : "read-only", authentication: "cloudflare-oauth-provider" });
     if (url.pathname === "/authorize") return authorize(request, env);
     return new Response("Not Found", { status: 404 });
   }
