@@ -5,6 +5,7 @@ import { z } from "zod";
 import { authorize } from "./oauth";
 import { type Env, safeLinkName, zohoGet, zohoGetFile, zohoGetPage } from "./zoho";
 import { registerWriteTools } from "./writes";
+import { registerCustomApiTools } from "./custom-api";
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const linkName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -92,7 +93,10 @@ export function createServer(env: Env) {
     );
     return { content: [{ type: "image" as const, data: file.data, mimeType: file.mimeType }] };
   });
-  if (env.ACCESS_MODE === "read_write") registerWriteTools(server, env);
+  if (env.ACCESS_MODE === "read_write") {
+    registerWriteTools(server, env);
+    registerCustomApiTools(server, env);
+  }
   return server;
 }
 
