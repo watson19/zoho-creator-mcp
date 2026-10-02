@@ -21,6 +21,7 @@
     "WRITE_ALLOWED_FORMS": "estudiantes/Informacion,estudiantes/Clases,estudiantes/Interviews",
     "WRITE_ALLOWED_REPORTS": "estudiantes/All_Students,estudiantes/Classes_List,estudiantes/Webmessages,estudiantes/All_Interviews,estudiantes/Interviews_Full_Export,estudiantes/Documents",
     "AUDIT_RETENTION_DAYS": "90",
+    "CUSTOM_API_ALLOWED_NAMES": "sync_interview_registrations",
     "ZOHO_ACCOUNT_OWNER": "idiomaswatson",
     "ZOHO_ACCOUNTS_URL": "https://accounts.zoho.com",
     "ZOHO_API_DOMAIN": "https://www.zohoapis.com"
