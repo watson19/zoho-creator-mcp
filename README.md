@@ -25,6 +25,7 @@ The separate admin Worker adds:
 - `prepare_create_record` and `create_record`
 - `prepare_update_record` and `update_record`
 - `list_audit_events`
+- `invoke_custom_api` for explicitly allowlisted Creator Custom APIs
 
 The admin Worker deliberately has no delete or bulk-update tool. Writes are denied unless `ACCESS_MODE=read_write`; targets must be present in the server-side allowlists. Every mutation requires a short-lived confirmation token generated from an exact preview, updates abort if the record changed after preparation, successful writes are read back for verification, and audit events are retained for 90 days by default.
 
@@ -64,6 +65,7 @@ ZohoCreator.report.READ
 ZohoCreator.form.CREATE
 ZohoCreator.report.UPDATE
 ZohoCreator.report.DELETE
+Zohocreator.customapi.EXECUTE
 ZohoForms.forms.ALL
 ```
 
@@ -90,8 +92,27 @@ Admin-only variables:
 | `WRITE_ALLOWED_FORMS` | `estudiantes/Informacion` | Comma-separated create/update form allowlist |
 | `WRITE_ALLOWED_REPORTS` | `estudiantes/All_Students` | Comma-separated verification/update report allowlist |
 | `AUDIT_RETENTION_DAYS` | `90` | Audit-event retention, clamped to 1–365 days |
+| `CUSTOM_API_ALLOWED_NAMES` | `sync_interview_registrations` | Comma-separated Custom API link-name allowlist |
 
 The older name `ZOHO_ACCOUNTS_DOMAIN` remains supported.
+
+## Creator Custom API invocation
+
+The admin Worker can invoke only Custom API link names listed in `CUSTOM_API_ALLOWED_NAMES`. The MCP tool is deliberately write-capable and requires `confirmed=true` on every invocation, because a Creator Custom API can mutate data regardless of its HTTP method.
+
+The Zoho refresh token used by the admin Worker must include:
+
+```text
+Zohocreator.customapi.EXECUTE
+```
+
+The tool uses Zoho OAuth and the generated Creator endpoint format:
+
+```text
+https://www.zohoapis.com/creator/custom/<account-owner>/<custom-api-link-name>
+```
+
+It supports GET, POST, PUT, and DELETE, optional query parameters, and an optional JSON body for non-GET requests. Public-key Custom APIs are intentionally not supported.
 
 ## Endpoints
 
