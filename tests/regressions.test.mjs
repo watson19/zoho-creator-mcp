@@ -158,3 +158,106 @@ test('write allowlists stay enforced', async t => {
   assert.equal(f.calls.reads, 0);
   assert.equal(f.calls.patches, 0);
 });
+
+
+function bulkFixture(t) {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const kv = storage(), tokenStore = storage();
+  const calls = { patches: 0, reads: 0, patchBodies: [] };
+  const values = new Map([['101', ''], ['102', '(H)'], ['103', 'H']]);
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.pathname === '/oauth/v2/token') return tokenResponse('bulk-test-access');
+    if (url.pathname.endsWith('/fields')) return Response.json({ code: 3000, fields: [{ link_name: 'Hermanos' }] });
+
+    const idsFrom = text => [...String(text || '').matchAll(/ID==(\d+)/g)].map(match => match[1]);
+    if (init.method === 'PATCH') {
+      calls.patches++;
+      const body = JSON.parse(init.body);
+      calls.patchBodies.push(body);
+      const ids = idsFrom(body.criteria);
+      for (const id of ids) values.set(id, body.data.Hermanos);
+      return Response.json({
+        code: 3000,
+        result: ids.map(ID => ({ code: 3000, data: { ID, Hermanos: values.get(ID) }, message: 'Data Updated Successfully' }))
+      });
+    }
+
+    calls.reads++;
+    const ids = idsFrom(url.searchParams.get('criteria'));
+    return Response.json({
+      code: 3000,
+      data: ids.map(ID => ({ ID, Hermanos: values.get(ID) }))
+    });
+  };
+
+  const broker = new TokenCoordinator(tokenStore, (...args) => globalThis.fetch(...args));
+  const env = {
+    ZOHO_CLIENT_ID: credentials.clientId, ZOHO_CLIENT_SECRET: credentials.clientSecret, ZOHO_REFRESH_TOKEN: credentials.refreshToken,
+    ZOHO_ACCOUNT_OWNER: 'idiomaswatson', ACCESS_MODE: 'read_write', WRITE_ALLOWED_APPS: 'estudiantes',
+    WRITE_ALLOWED_FORMS: 'estudiantes/Informacion', WRITE_ALLOWED_REPORTS: 'estudiantes/All_Students', OAUTH_KV: kv,
+    ZOHO_TOKEN_BROKER: { idFromName: key => key, get: () => ({ fetch: async (_url, init) => Response.json(await broker.get(JSON.parse(init.body))) }) }
+  };
+  const handlers = new Map();
+  registerWriteTools({ registerTool: (name, _schema, fn) => handlers.set(name, fn) }, env);
+  const args = {
+    app_link_name: 'estudiantes',
+    form_link_name: 'Informacion',
+    report_link_name: 'All_Students',
+    record_ids: ['101', '102', '103'],
+    environment: 'production',
+    data: { Hermanos: 'H' }
+  };
+  return {
+    calls,
+    values,
+    run: (name, extra = {}) => handlers.get(name)({ ...args, ...extra })
+  };
+}
+
+test('bulk update previews exact IDs, skips already-matching records, writes once, and verifies all changed records', async t => {
+  const f = bulkFixture(t);
+  const preview = (await f.run('prepare_bulk_update_records')).structuredContent;
+  assert.equal(preview.selected_record_count, 3);
+  assert.equal(preview.records_to_update_count, 2);
+  assert.equal(preview.already_matching_count, 1);
+
+  const result = (await f.run('bulk_update_records', {
+    confirmed: true,
+    confirmation_token: preview.confirmation_token
+  })).structuredContent;
+
+  assert.equal(result.verified, true);
+  assert.equal(result.updated_record_count, 2);
+  assert.deepEqual(result.updated_record_ids, ['101', '102']);
+  assert.deepEqual(result.already_matching_record_ids, ['103']);
+  assert.equal(f.calls.patches, 1);
+  assert.equal(f.calls.reads, 3);
+  assert.match(f.calls.patchBodies[0].criteria, /ID==101/);
+  assert.match(f.calls.patchBodies[0].criteria, /ID==102/);
+  assert.doesNotMatch(f.calls.patchBodies[0].criteria, /ID==103/);
+  assert.equal(f.values.get('101'), 'H');
+  assert.equal(f.values.get('102'), 'H');
+});
+
+test('bulk update aborts without mutation if any selected record changed after preview', async t => {
+  const f = bulkFixture(t);
+  const preview = (await f.run('prepare_bulk_update_records')).structuredContent;
+  f.values.set('102', 'Changed elsewhere');
+  await assert.rejects(
+    f.run('bulk_update_records', { confirmed: true, confirmation_token: preview.confirmation_token }),
+    /no longer match/
+  );
+  assert.equal(f.calls.patches, 0);
+});
+
+test('bulk update rejects more than 200 IDs even when called without schema validation', async t => {
+  const f = bulkFixture(t);
+  await assert.rejects(
+    f.run('prepare_bulk_update_records', { record_ids: Array.from({ length: 201 }, (_, index) => String(index + 1)) }),
+    /at most 200/
+  );
+  assert.equal(f.calls.patches, 0);
+});
