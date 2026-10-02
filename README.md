@@ -24,10 +24,11 @@ The separate admin Worker adds:
 
 - `prepare_create_record` and `create_record`
 - `prepare_update_record` and `update_record`
+- `prepare_bulk_update_records` and `bulk_update_records` for 1–200 explicit record IDs
 - `list_audit_events`
 - `invoke_custom_api` for explicitly allowlisted Creator Custom APIs
 
-The admin Worker deliberately has no delete or bulk-update tool. Writes are denied unless `ACCESS_MODE=read_write`; targets must be present in the server-side allowlists. Every mutation requires a short-lived confirmation token generated from an exact preview, updates abort if the record changed after preparation, successful writes are read back for verification, and audit events are retained for 90 days by default.
+The admin Worker deliberately has no delete tool. Bulk updates accept only explicit record IDs (maximum 200), never arbitrary caller-supplied criteria. Writes are denied unless `ACCESS_MODE=read_write`; targets must be present in the server-side allowlists. Every mutation requires a short-lived confirmation token generated from an exact preview, updates abort if the record changed after preparation, successful writes are read back for verification, and audit events are retained for 90 days by default.
 
 ## ChatGPT authentication
 
@@ -164,6 +165,14 @@ npm run deploy
 The GitHub deployment workflow performs that order after tests and type checks.
 Do not remove the broker binding from either Worker. Existing OAuth secrets,
 write allowlists, explicit preview confirmation, and audit behavior are preserved.
+
+## Bulk updates
+
+The admin Worker exposes a two-step confirmed bulk update for up to 200 explicit record IDs, matching Zoho Creator v2.1's Update Records limit. Preparation reads all selected records in one report request, previews per-record changes, and binds the preview to a short-lived confirmation token. Execution re-reads the selection to detect concurrent changes, performs one PATCH against the report using an internally generated ID-only criteria, and then reads the changed records back once for verification.
+
+The caller cannot supply arbitrary bulk criteria. This keeps mass updates inside the same app/form/report allowlists as single-record writes while reducing API use dramatically. A typical confirmed bulk update uses roughly five Zoho calls total: form-field validation + preview read, then pre-write concurrency read + one PATCH + one verification read.
+
+Associated Creator workflows run by default. The optional `skip_workflow` input can explicitly skip `form_workflow`, `schedules`, or `all` where Zoho permits it.
 
 ## Required fields for write verification
 
