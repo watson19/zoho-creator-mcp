@@ -141,7 +141,7 @@ The two Workers must be configured with different `MCP_SHARED_SECRET` values. Fo
 
 Never commit `.dev.vars`, OAuth tokens, Zoho credentials, or the shared secret.
 
-## Token coordination (v0.5.1)
+## Token coordination (v0.6.0)
 
 Zoho access tokens are cached in the SQLite-backed `ZohoTokenBroker` Durable
 Object hosted by the admin Worker. Both Workers bind to this coordinator. The
