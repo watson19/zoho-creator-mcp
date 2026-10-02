@@ -12,7 +12,7 @@ const recordData = z.record(z.string(), z.unknown()).refine((value) => Object.ke
 
 type JsonRecord = Record<string, unknown>;
 type Confirmation = {
-  action: "create" | "update";
+  action: "create" | "update" | "bulk_update";
   target: string;
   payloadHash: string;
   beforeHash?: string;
@@ -82,6 +82,59 @@ async function getRecord(env: Env, app: string, report: string, id: string, envN
   const missing = fields.filter(field => !Object.prototype.hasOwnProperty.call(record, field));
   if (missing.length) throw new Error(`Cannot verify fields missing from report ${app}/${report}: ${missing.join(", ")}. Make these fields readable in the authorised report.`);
   return record;
+}
+
+function normalizeRecordIds(values: string[]): string[] {
+  const ids = [...new Set(values)];
+  if (!ids.length) throw new Error("record_ids must contain at least one record ID");
+  if (ids.length > 200) throw new Error("Zoho bulk updates support at most 200 record IDs per request");
+  for (const id of ids) {
+    if (!/^\d+$/.test(id)) throw new Error(`Invalid record ID: ${id}`);
+  }
+  return ids.sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeSkipWorkflow(values?: string[]): string[] {
+  const items = [...new Set(values || [])].sort();
+  if (items.includes("all") && items.length > 1) throw new Error('skip_workflow "all" cannot be combined with other values');
+  return items;
+}
+
+function idCriteria(ids: string[]): string {
+  return `(${ids.map((id) => `ID==${id}`).join(" || ")})`;
+}
+
+async function getRecordsByIds(env: Env, app: string, report: string, ids: string[], envName: string, fields: string[]): Promise<JsonRecord[]> {
+  const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+  const response = await zohoGet(
+    env,
+    `/creator/v2.1/data/${owner}/${app}/report/${report}`,
+    {
+      criteria: idCriteria(ids),
+      max_records: 200,
+      field_config: "custom",
+      fields: [...new Set(["ID", ...fields])].join(",")
+    },
+    envName
+  ) as { data?: JsonRecord | JsonRecord[] };
+
+  const records = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];
+  const byId = new Map<string, JsonRecord>();
+  for (const record of records) {
+    const id = String(record.ID || "");
+    if (!ids.includes(id)) throw new Error(`Zoho returned unexpected record ID ${id || "(blank)"}`);
+    const missing = fields.filter((field) => !Object.prototype.hasOwnProperty.call(record, field));
+    if (missing.length) throw new Error(`Cannot verify fields missing from report ${app}/${report}: ${missing.join(", ")}. Make these fields readable in the authorised report.`);
+    byId.set(id, record);
+  }
+
+  const missingIds = ids.filter((id) => !byId.has(id));
+  if (missingIds.length) throw new Error(`Zoho record(s) not found in authorised report: ${missingIds.join(", ")}`);
+  return ids.map((id) => byId.get(id)!);
+}
+
+function bulkBefore(records: JsonRecord[], fields: string[]): JsonRecord[] {
+  return records.map((record) => ({ ID: String(record.ID), ...subset(record, fields) }));
 }
 
 function subset(record: JsonRecord, fields: string[]): JsonRecord {
@@ -210,6 +263,184 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     await audit(env, { action: "update", app_link_name, form_link_name, report_link_name, record_id, before, after, result: mismatches.length ? "verification_mismatch" : "verified", mismatched_fields: mismatches });
     if (mismatches.length) throw new Error(`Zoho updated record ${record_id}, but read-back verification differed for: ${mismatches.join(", ")}. Do not retry automatically.`);
     return output({ code: 3000, action: "update", record_id, verified: true, before, after });
+  });
+
+  server.registerTool("prepare_bulk_update_records", {
+    description: "Read and preview one exact field-level update across 1 to 200 explicit Zoho Creator record IDs. This does not write anything. The returned token may be used only after the user explicitly confirms the exact preview.",
+    inputSchema: {
+      app_link_name: linkName,
+      form_link_name: linkName,
+      report_link_name: linkName,
+      record_ids: z.array(recordId).min(1).max(200),
+      data: recordData,
+      skip_workflow: z.array(z.enum(["form_workflow", "schedules", "all"])).max(2).optional(),
+      environment
+    },
+    annotations: readOnly
+  }, async ({ app_link_name, form_link_name, report_link_name, record_ids, data, skip_workflow, environment }) => {
+    assertWriteTarget(env, app_link_name, "form", form_link_name);
+    assertWriteTarget(env, app_link_name, "report", report_link_name);
+    validateData(data);
+    await validateFormFields(env, app_link_name, form_link_name, data, environment);
+
+    const ids = normalizeRecordIds(record_ids);
+    const skippedWorkflows = normalizeSkipWorkflow(skip_workflow);
+    const fields = Object.keys(data);
+    const beforeRecords = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
+    const before = bulkBefore(beforeRecords, fields);
+    const toUpdate = before.filter((record) => mismatchedFields(record, data).length > 0);
+    const alreadyMatching = before.filter((record) => mismatchedFields(record, data).length === 0);
+    if (!toUpdate.length) throw new Error("All selected records already contain the proposed values; no update is needed");
+
+    const target = `${environment}:${app_link_name}:form:${form_link_name}:report:${report_link_name}:bulk`;
+    const payload = { record_ids: ids, data, skip_workflow: skippedWorkflows };
+    const prepared = await prepareConfirmation(env, {
+      action: "bulk_update",
+      target,
+      payloadHash: await hash(payload),
+      beforeHash: await hash(before)
+    });
+
+    return output({
+      action: "bulk_update",
+      target: { app_link_name, form_link_name, report_link_name, environment },
+      selected_record_count: ids.length,
+      records_to_update_count: toUpdate.length,
+      already_matching_count: alreadyMatching.length,
+      record_previews: before.map((record) => ({
+        record_id: record.ID,
+        changes: fields
+          .map((field) => ({ field, from: record[field], to: data[field] }))
+          .filter((change) => !containsExpected(change.from, change.to))
+      })),
+      skip_workflow: skippedWorkflows,
+      confirmation_token: prepared.confirmationToken,
+      expires_at: prepared.expiresAt,
+      requires_explicit_user_confirmation: true
+    });
+  });
+
+  server.registerTool("bulk_update_records", {
+    description: "Apply one prepared bulk update to at most 200 explicit Zoho Creator record IDs using a single Update Records API request, then read back and verify every changed record. Call only after the user explicitly confirms the preview returned by prepare_bulk_update_records.",
+    inputSchema: {
+      app_link_name: linkName,
+      form_link_name: linkName,
+      report_link_name: linkName,
+      record_ids: z.array(recordId).min(1).max(200),
+      data: recordData,
+      skip_workflow: z.array(z.enum(["form_workflow", "schedules", "all"])).max(2).optional(),
+      confirmation_token: z.string().min(20).max(200),
+      confirmed: z.literal(true),
+      environment
+    },
+    annotations: updateWrite
+  }, async ({ app_link_name, form_link_name, report_link_name, record_ids, data, skip_workflow, confirmation_token, environment }) => {
+    assertWriteTarget(env, app_link_name, "form", form_link_name);
+    assertWriteTarget(env, app_link_name, "report", report_link_name);
+    validateData(data);
+
+    const ids = normalizeRecordIds(record_ids);
+    const skippedWorkflows = normalizeSkipWorkflow(skip_workflow);
+    const fields = Object.keys(data);
+    const target = `${environment}:${app_link_name}:form:${form_link_name}:report:${report_link_name}:bulk`;
+    const payload = { record_ids: ids, data, skip_workflow: skippedWorkflows };
+    const confirmation = await readConfirmation(env, confirmation_token);
+    const beforeRecords = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
+    const before = bulkBefore(beforeRecords, fields);
+
+    if (
+      confirmation.action !== "bulk_update" ||
+      confirmation.target !== target ||
+      confirmation.payloadHash !== await hash(payload) ||
+      confirmation.beforeHash !== await hash(before)
+    ) {
+      throw new Error("The selected records or proposed bulk update no longer match the prepared preview; prepare it again");
+    }
+
+    const toUpdateIds = before
+      .filter((record) => mismatchedFields(record, data).length > 0)
+      .map((record) => String(record.ID));
+    const alreadyMatchingIds = before
+      .filter((record) => mismatchedFields(record, data).length === 0)
+      .map((record) => String(record.ID));
+    if (!toUpdateIds.length) throw new Error("All selected records already contain the proposed values; no update is needed");
+
+    await consumeConfirmation(env, confirmation_token);
+    const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+    const body: JsonRecord = {
+      criteria: idCriteria(toUpdateIds),
+      data,
+      result: { fields: ["ID", ...fields], message: true }
+    };
+    if (skippedWorkflows.length) body.skip_workflow = skippedWorkflows;
+
+    const mutation = await zohoMutate(
+      env,
+      `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`,
+      "PATCH",
+      body,
+      {},
+      environment
+    );
+    if (mutation.more_records === true) {
+      await audit(env, {
+        action: "bulk_update",
+        app_link_name,
+        form_link_name,
+        report_link_name,
+        record_ids: toUpdateIds,
+        result: "unexpected_more_records"
+      }).catch(() => undefined);
+      throw new Error("Zoho reported more matching records than the explicit bulk selection. Do not retry automatically.");
+    }
+
+    let afterRecords: JsonRecord[];
+    try {
+      afterRecords = await getRecordsByIds(env, app_link_name, report_link_name, toUpdateIds, environment, fields);
+    } catch (error) {
+      await audit(env, {
+        action: "bulk_update",
+        app_link_name,
+        form_link_name,
+        report_link_name,
+        record_ids: toUpdateIds,
+        result: "verification_unavailable"
+      }).catch(() => undefined);
+      throw new Error(`Zoho bulk-updated ${toUpdateIds.length} record(s), but read-back verification was unavailable. Do not retry automatically. ${error instanceof Error ? error.message : ""}`);
+    }
+
+    const mismatches = afterRecords
+      .map((record) => ({ record_id: String(record.ID), fields: mismatchedFields(record, data) }))
+      .filter((item) => item.fields.length > 0);
+    await audit(env, {
+      action: "bulk_update",
+      app_link_name,
+      form_link_name,
+      report_link_name,
+      record_ids: toUpdateIds,
+      selected_record_count: ids.length,
+      updated_record_count: toUpdateIds.length,
+      already_matching_count: alreadyMatchingIds.length,
+      data,
+      skip_workflow: skippedWorkflows,
+      result: mismatches.length ? "verification_mismatch" : "verified",
+      mismatches
+    });
+    if (mismatches.length) {
+      throw new Error(`Zoho bulk-updated the selected records, but read-back verification differed for ${mismatches.length} record(s). Do not retry automatically.`);
+    }
+
+    return output({
+      code: 3000,
+      action: "bulk_update",
+      verified: true,
+      selected_record_count: ids.length,
+      updated_record_count: toUpdateIds.length,
+      updated_record_ids: toUpdateIds,
+      already_matching_count: alreadyMatchingIds.length,
+      already_matching_record_ids: alreadyMatchingIds,
+      skip_workflow: skippedWorkflows
+    });
   });
 
   server.registerTool("list_audit_events", { description: "List recent create/update audit events generated by the admin connector.", inputSchema: { limit: z.number().int().min(1).max(50).default(20) }, annotations: readOnly }, async ({ limit }) => {
