@@ -18,6 +18,7 @@ export interface Env {
   WRITE_ALLOWED_FORMS?: string;
   WRITE_ALLOWED_REPORTS?: string;
   AUDIT_RETENTION_DAYS?: string;
+  CUSTOM_API_ALLOWED_NAMES?: string;
 }
 
 const LINK_NAME = /^[A-Za-z0-9_-]+$/;
@@ -144,6 +145,66 @@ export async function zohoGetFile(
     return { data: btoa(binary), mimeType };
   }
   throw new Error("Zoho file download failed after token refresh");
+}
+
+export async function zohoCustomApiRequest(
+  env: Env,
+  customApiName: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  query: Record<string, string | number | boolean | undefined> = {},
+  body?: unknown
+): Promise<{ status: number; contentType: string; data: unknown }> {
+  if (env.ACCESS_MODE !== "read_write") throw new Error("This connector is read-only");
+
+  const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+  const apiName = safeLinkName(customApiName, "custom API name");
+  let rejectedAccessToken: string | undefined;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const credentials = await token(env, rejectedAccessToken);
+    const url = new URL(`/creator/custom/${owner}/${apiName}`, credentials.apiDomain);
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+    }
+
+    const headers: Record<string, string> = {
+      Authorization: `Zoho-oauthtoken ${credentials.accessToken}`
+    };
+    const init: RequestInit = { method, headers };
+    if (method !== "GET" && body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, init);
+    const contentType = (response.headers.get("content-type") || "application/octet-stream").split(";")[0];
+    const raw = await response.text();
+    let data: unknown = raw;
+    if (raw) {
+      try { data = JSON.parse(raw); } catch { /* Preserve non-JSON custom responses as text. */ }
+    } else {
+      data = null;
+    }
+
+    if (response.status === 401 && attempt === 0) {
+      rejectedAccessToken = credentials.accessToken;
+      continue;
+    }
+    if (!response.ok) {
+      const object = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
+      const message = typeof object?.message === "string"
+        ? object.message
+        : typeof object?.error === "string"
+          ? object.error
+          : typeof data === "string" && data
+            ? data
+            : "Zoho Custom API request failed";
+      throw new Error(`${message} (HTTP ${response.status})`);
+    }
+
+    return { status: response.status, contentType, data };
+  }
+  throw new Error("Zoho Custom API request failed after token refresh");
 }
 
 export async function zohoMutate(
