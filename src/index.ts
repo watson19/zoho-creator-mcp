@@ -4,6 +4,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { authorize } from "./oauth";
 import { type Env, safeLinkName, zohoGet, zohoGetFile, zohoGetPage } from "./zoho";
+import { registerBulkSearchTools } from "./search";
 import { registerWriteTools } from "./writes";
 import { registerCustomApiTools } from "./custom-api";
 
@@ -72,6 +73,7 @@ export function createServer(env: Env) {
     } while (cursor && pages < max_pages);
     return output({ code: 3000, data: records, count: records.length, pages, complete: !cursor, record_cursor: cursor });
   });
+  registerBulkSearchTools(server, env);
   server.registerTool("get_record", { description: "Read one record by its numeric ID from a Creator report.", inputSchema: { app_link_name: linkName, report_link_name: linkName, record_id: z.string().regex(/^\d+$/), environment }, annotations: readOnly }, async ({ app_link_name, report_link_name, record_id, environment }) => {
     const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
     return output(await zohoGet(env, `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}/${record_id}`, {}, environment));

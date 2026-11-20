@@ -58,7 +58,8 @@ export async function zohoGet(
   env: Env,
   path: string,
   query: Record<string, string | number | undefined> = {},
-  environment = "production"
+  environment = "production",
+  allowEmpty = false
 ): Promise<unknown> {
   let rejectedAccessToken: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -73,6 +74,7 @@ export async function zohoGet(
     const response = await fetch(url, { headers });
     const data = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
+    if (response.ok && allowEmpty && data.code === 3100) return { code: 3000, data: [] };
     if (!response.ok || (typeof data.code === "number" && data.code !== 3000)) {
       const message = typeof data.message === "string" ? data.message : "Zoho request failed";
       throw new Error(`${message} (HTTP ${response.status})`);
@@ -103,6 +105,7 @@ export async function zohoGetPage(
     const response = await fetch(url, { headers });
     const data = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
+    if (response.ok && data.code === 3100) return { code: 3000, data: [] };
     if (!response.ok || (typeof data.code === "number" && data.code !== 3000)) {
       const message = typeof data.message === "string" ? data.message : "Zoho request failed";
       throw new Error(`${message} (HTTP ${response.status})`);
@@ -210,7 +213,7 @@ export async function zohoCustomApiRequest(
 export async function zohoMutate(
   env: Env,
   path: string,
-  method: "POST" | "PATCH",
+  method: "POST" | "PATCH" | "DELETE",
   body: Record<string, unknown>,
   query: Record<string, string | number | undefined> = {},
   environment = "production"
@@ -235,7 +238,7 @@ export async function zohoMutate(
     if (response.status === 401 && attempt === 0) { rejectedAccessToken = credentials.accessToken; continue; }
     const resultItems = Array.isArray(data.result) ? data.result.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
     const failedResult = resultItems.find((item) => typeof item.code === "number" && item.code !== 3000);
-    if (!response.ok || (typeof data.code === "number" && data.code !== 3000) || failedResult) {
+    if (!response.ok || (typeof data.code === "number" && data.code !== 3000) || (failedResult && method !== "DELETE")) {
       const nestedError = failedResult?.error;
       const message = typeof failedResult?.message === "string"
         ? failedResult.message

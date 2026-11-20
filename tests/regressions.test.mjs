@@ -13,6 +13,7 @@ async function loadSource(path) {
   return import(pathToFileURL(output).href);
 }
 const { TokenCoordinator, credentialKey } = await loadSource('src/token-cache.ts');
+const { registerBulkSearchTools } = await loadSource('src/search.ts');
 const { registerWriteTools } = await loadSource('src/writes.ts');
 const credentials = { accountsUrl: 'https://accounts.zoho.com', clientId: 'test-client', clientSecret: 'test-secret', refreshToken: 'test-refresh' };
 const storage = () => {
@@ -260,4 +261,98 @@ test('bulk update rejects more than 200 IDs even when called without schema vali
     /at most 200/
   );
   assert.equal(f.calls.patches, 0);
+});
+
+function deleteFixture(t, { failId, hideAfterDelete = false } = {}) {
+  const f = bulkFixture(t);
+  const upstream = globalThis.fetch;
+  let deleted = false;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'DELETE') {
+      const ids = [...JSON.parse(init.body).criteria.matchAll(/ID==(\d+)/g)].map(match => match[1]);
+      calls.push(ids);
+      for (const id of ids) if (id !== failId) f.values.delete(id);
+      deleted = true;
+      return Response.json({ code: 3000, result: ids.map(ID => ({ code: ID === failId ? 3001 : 3000, data: { ID } })) });
+    }
+    if (String(url).includes('/report/')) {
+      if (deleted && hideAfterDelete) throw new Error('verification offline');
+      const ids = [...(new URL(url).searchParams.get('criteria') || '').matchAll(/ID==(\d+)/g)].map(match => match[1]);
+      const data = ids.filter(id => f.values.has(id)).map(ID => ({ ID, Hermanos: f.values.get(ID), Modified_Time: 'unchanged' }));
+      return Response.json(data.length ? { code: 3000, data } : { code: 3100, message: 'No records found' });
+    }
+    return upstream(url, init);
+  };
+  return { ...f, calls, run: (name, extra = {}) => f.run(name, { preview_fields: ['Hermanos'], ...extra }) };
+}
+
+test('bulk delete previews, deletes exact IDs once, verifies empty report and rejects replay', async t => {
+  const f = deleteFixture(t);
+  const p = (await f.run('prepare_bulk_delete_records')).structuredContent;
+  const args = { confirmation_token: p.confirmation_token, confirmed: true };
+  const r = (await f.run('bulk_delete_records', args)).structuredContent;
+  assert.equal(r.verified, true);
+  assert.deepEqual(r.deleted_record_ids, ['101', '102', '103']);
+  assert.deepEqual(f.calls, [['101', '102', '103']]);
+  await assert.rejects(f.run('bulk_delete_records', args));
+  assert.equal(f.calls.length, 1);
+});
+
+test('bulk delete reports individual failures without claiming full success', async t => {
+  const f = deleteFixture(t, { failId: '102' });
+  const p = (await f.run('prepare_bulk_delete_records')).structuredContent;
+  const r = (await f.run('bulk_delete_records', { confirmation_token: p.confirmation_token, confirmed: true })).structuredContent;
+  assert.equal(r.verified, false);
+  assert.deepEqual(r.deleted_record_ids, ['101', '103']);
+  assert.deepEqual(r.unresolved_record_ids, ['102']);
+});
+
+test('bulk delete rejects changed selection or records before mutation', async t => {
+  const f = deleteFixture(t);
+  const p = (await f.run('prepare_bulk_delete_records')).structuredContent;
+  const args = { confirmation_token: p.confirmation_token, confirmed: true };
+  await assert.rejects(f.run('bulk_delete_records', { ...args, record_ids: ['101'] }), /changed/);
+  f.values.set('102', 'changed');
+  await assert.rejects(f.run('bulk_delete_records', args), /changed/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('bulk delete preserves uncertain outcome when verification fails', async t => {
+  const f = deleteFixture(t, { hideAfterDelete: true });
+  const p = (await f.run('prepare_bulk_delete_records')).structuredContent;
+  await assert.rejects(f.run('bulk_delete_records', { confirmation_token: p.confirmation_token, confirmed: true }), /may have partially completed/);
+  assert.equal(f.calls.length, 1);
+});
+
+test('bulk search escapes text, follows cursors, preserves numeric IDs, and handles no matches', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const broker = new TokenCoordinator(storage(), (...args) => globalThis.fetch(...args));
+  const handlers = new Map();
+  const env = { ZOHO_CLIENT_ID: credentials.clientId, ZOHO_CLIENT_SECRET: credentials.clientSecret, ZOHO_REFRESH_TOKEN: credentials.refreshToken, ZOHO_ACCOUNT_OWNER: 'idiomaswatson',
+    ZOHO_TOKEN_BROKER: { idFromName: key => key, get: () => ({ fetch: async (_url, init) => Response.json(await broker.get(JSON.parse(init.body))) }) } };
+  registerBulkSearchTools({ registerTool: (name, schema, fn) => handlers.set(name, fn) }, env);
+  let reads = 0;
+  let lastCriteria;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.pathname === '/oauth/v2/token') return tokenResponse('search-token');
+    lastCriteria = url.searchParams.get('criteria');
+    reads++;
+    if (lastCriteria.includes('missing')) return Response.json({ code: 3100 });
+    return Response.json({ code: 3000, data: [{ ID: String(reads) }] }, { headers: reads === 1 ? { record_cursor: 'next-page' } : {} });
+  };
+  const run = handlers.get('bulk_search_records');
+  const args = { app_link_name: 'estudiantes', report_link_name: 'All_Students', field_link_name: 'Nombre', values: ['a"b'], value_type: 'string', fields: ['ID'], max_pages: 1, environment: 'production' };
+  const first = (await run(args)).structuredContent;
+  assert.equal(lastCriteria, '(Nombre=="a\\"b")');
+  assert.equal(first.complete, false);
+  assert.equal(first.record_cursor, 'next-page');
+  assert.equal((await run({ ...args, record_cursor: first.record_cursor })).structuredContent.complete, true);
+  await run({ ...args, field_link_name: 'ID', values: ['794195000008553959'], value_type: 'number' });
+  assert.equal(lastCriteria, '(ID==794195000008553959)');
+  const empty = (await run({ ...args, values: ['missing'] })).structuredContent;
+  assert.equal(empty.count, 0);
+  await assert.rejects(run({ ...args, value_type: 'number', values: ['1 || ID!=0'] }), /Numeric/);
 });

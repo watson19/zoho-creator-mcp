@@ -12,7 +12,7 @@ const recordData = z.record(z.string(), z.unknown()).refine((value) => Object.ke
 
 type JsonRecord = Record<string, unknown>;
 type Confirmation = {
-  action: "create" | "update" | "bulk_update";
+  action: "create" | "update" | "bulk_update" | "bulk_delete";
   target: string;
   payloadHash: string;
   beforeHash?: string;
@@ -87,7 +87,7 @@ async function getRecord(env: Env, app: string, report: string, id: string, envN
 function normalizeRecordIds(values: string[]): string[] {
   const ids = [...new Set(values)];
   if (!ids.length) throw new Error("record_ids must contain at least one record ID");
-  if (ids.length > 200) throw new Error("Zoho bulk updates support at most 200 record IDs per request");
+  if (ids.length > 200) throw new Error("Zoho bulk operations support at most 200 record IDs per request");
   for (const id of ids) {
     if (!/^\d+$/.test(id)) throw new Error(`Invalid record ID: ${id}`);
   }
@@ -441,6 +441,73 @@ export function registerWriteTools(server: McpServer, env: Env): void {
       already_matching_record_ids: alreadyMatchingIds,
       skip_workflow: skippedWorkflows
     });
+  });
+
+  const deleteSchema = {
+    app_link_name: linkName,
+    report_link_name: linkName,
+    record_ids: z.array(recordId).min(1).max(200),
+    preview_fields: z.array(linkName).min(1).max(20),
+    skip_workflow: z.array(z.literal("form_workflow")).max(1).optional(),
+    environment
+  };
+  server.registerTool("prepare_bulk_delete_records", {
+    description: "Preview deletion of 1 to 200 explicit record IDs. Returns identifying fields and a confirmation token. Show the preview and obtain user approval before bulk_delete_records.",
+    inputSchema: deleteSchema,
+    annotations: readOnly
+  }, async ({ app_link_name, report_link_name, record_ids, preview_fields, skip_workflow, environment }) => {
+    assertWriteTarget(env, app_link_name, "report", report_link_name);
+    const ids = normalizeRecordIds(record_ids);
+    const fields = [...new Set([...preview_fields, "Modified_Time"])].sort();
+    const before = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
+    const payload = { record_ids: ids, fields, skip_workflow: normalizeSkipWorkflow(skip_workflow) };
+    const target = `${environment}:${app_link_name}:report:${report_link_name}:delete`;
+    const prepared = await prepareConfirmation(env, { action: "bulk_delete", target, payloadHash: await hash(payload), beforeHash: await hash(before) });
+    return output({ action: "bulk_delete", target, record_count: ids.length, records: before, skip_workflow: payload.skip_workflow,
+      confirmation_token: prepared.confirmationToken, expires_at: prepared.expiresAt, requires_explicit_user_confirmation: true });
+  });
+
+  server.registerTool("bulk_delete_records", {
+    description: "Delete the explicit IDs approved in prepare_bulk_delete_records. Rechecks the preview, reports individual failures, and verifies absence. Never automatically retry an uncertain deletion.",
+    inputSchema: { ...deleteSchema, confirmation_token: z.string().min(20).max(200), confirmed: z.literal(true) },
+    annotations: updateWrite
+  }, async ({ app_link_name, report_link_name, record_ids, preview_fields, skip_workflow, environment, confirmation_token }) => {
+    assertWriteTarget(env, app_link_name, "report", report_link_name);
+    const ids = normalizeRecordIds(record_ids);
+    const fields = [...new Set([...preview_fields, "Modified_Time"])].sort();
+    const before = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
+    const payload = { record_ids: ids, fields, skip_workflow: normalizeSkipWorkflow(skip_workflow) };
+    const target = `${environment}:${app_link_name}:report:${report_link_name}:delete`;
+    const confirmation = await readConfirmation(env, confirmation_token);
+    if (confirmation.action !== "bulk_delete" || confirmation.target !== target || confirmation.payloadHash !== await hash(payload) || confirmation.beforeHash !== await hash(before)) {
+      throw new Error("The deletion or selected records changed after preparation; prepare again");
+    }
+    await consumeConfirmation(env, confirmation_token);
+    const owner = safeLinkName(env.ZOHO_ACCOUNT_OWNER, "account owner");
+    const path = `/creator/v2.1/data/${owner}/${app_link_name}/report/${report_link_name}`;
+    const body: JsonRecord = { criteria: idCriteria(ids) };
+    if (payload.skip_workflow.length) body.skip_workflow = payload.skip_workflow;
+    // Persist the selection before dispatch so a lost response can be investigated.
+    await audit(env, { action: "bulk_delete", target, record_ids: ids, before, result: "requested" });
+    let mutation: JsonRecord;
+    let remaining: JsonRecord[];
+    try {
+      mutation = await zohoMutate(env, path, "DELETE", body, {}, environment);
+      const response = await zohoGet(env, path, { criteria: idCriteria(ids), max_records: 200, field_config: "custom", fields: "ID" }, environment, true) as { data: JsonRecord[] };
+      if (!Array.isArray(response.data)) throw new Error("Invalid verification response");
+      remaining = response.data;
+    } catch (error) {
+      await audit(env, { action: "bulk_delete", target, record_ids: ids, result: "outcome_unknown" });
+      throw new Error(`Deletion may have partially completed. Read the IDs before retrying. ${error instanceof Error ? error.message : ""}`);
+    }
+    const results = Array.isArray(mutation.result) ? mutation.result as JsonRecord[] : [];
+    const remainingIds = new Set(remaining.map(record => String(record.ID)));
+    const succeeded = new Set(results.filter(result => result.code === 3000).map(result => String((result.data as JsonRecord)?.ID)));
+    const deletedIds = ids.filter(id => succeeded.has(id) && !remainingIds.has(id));
+    const unresolvedIds = ids.filter(id => !deletedIds.includes(id));
+    const verified = !unresolvedIds.length && mutation.more_records !== true && remaining.length === 0;
+    await audit(env, { action: "bulk_delete", target, deleted_record_ids: deletedIds, unresolved_record_ids: unresolvedIds, result: verified ? "verified" : "partial_or_unverified" });
+    return output({ action: "bulk_delete", verified, deleted_record_ids: deletedIds, unresolved_record_ids: unresolvedIds, results });
   });
 
   server.registerTool("list_audit_events", { description: "List recent create/update audit events generated by the admin connector.", inputSchema: { limit: z.number().int().min(1).max(50).default(20) }, annotations: readOnly }, async ({ limit }) => {
