@@ -458,7 +458,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
   }, async ({ app_link_name, report_link_name, record_ids, preview_fields, skip_workflow, environment }) => {
     assertWriteTarget(env, app_link_name, "report", report_link_name);
     const ids = normalizeRecordIds(record_ids);
-    const fields = [...new Set([...preview_fields, "Modified_Time"])].sort();
+    const fields = [...new Set(preview_fields)].sort();
     const before = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
     const payload = { record_ids: ids, fields, skip_workflow: normalizeSkipWorkflow(skip_workflow) };
     const target = `${environment}:${app_link_name}:report:${report_link_name}:delete`;
@@ -474,7 +474,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
   }, async ({ app_link_name, report_link_name, record_ids, preview_fields, skip_workflow, environment, confirmation_token }) => {
     assertWriteTarget(env, app_link_name, "report", report_link_name);
     const ids = normalizeRecordIds(record_ids);
-    const fields = [...new Set([...preview_fields, "Modified_Time"])].sort();
+    const fields = [...new Set(preview_fields)].sort();
     const before = await getRecordsByIds(env, app_link_name, report_link_name, ids, environment, fields);
     const payload = { record_ids: ids, fields, skip_workflow: normalizeSkipWorkflow(skip_workflow) };
     const target = `${environment}:${app_link_name}:report:${report_link_name}:delete`;
