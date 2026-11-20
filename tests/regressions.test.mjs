@@ -278,6 +278,7 @@ function deleteFixture(t, { failId, hideAfterDelete = false } = {}) {
     }
     if (String(url).includes('/report/')) {
       if (deleted && hideAfterDelete) throw new Error('verification offline');
+      assert.notEqual(new URL(url).searchParams.get('fields'), 'ID', 'Zoho rejects a custom selection containing only its system ID');
       const ids = [...(new URL(url).searchParams.get('criteria') || '').matchAll(/ID==(\d+)/g)].map(match => match[1]);
       const data = ids.filter(id => f.values.has(id)).map(ID => ({ ID, Hermanos: f.values.get(ID) }));
       return Response.json(data.length ? { code: 3000, data } : { code: 3100, message: 'No records found' });

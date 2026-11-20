@@ -493,7 +493,7 @@ export function registerWriteTools(server: McpServer, env: Env): void {
     let remaining: JsonRecord[];
     try {
       mutation = await zohoMutate(env, path, "DELETE", body, {}, environment);
-      const response = await zohoGet(env, path, { criteria: idCriteria(ids), max_records: 200, field_config: "custom", fields: "ID" }, environment, true) as { data: JsonRecord[] };
+      const response = await zohoGet(env, path, { criteria: idCriteria(ids), max_records: 200 }, environment, true) as { data: JsonRecord[] };
       if (!Array.isArray(response.data)) throw new Error("Invalid verification response");
       remaining = response.data;
     } catch (error) {
